@@ -1,0 +1,56 @@
+#+TITLE: Nielsen Cereal Data Pipeline
+#+AUTHOR: Ethan Ligon
+
+* Overview
+
+Self-contained pipeline from raw NielsenIQ Consumer Panel tarballs to
+estimation-ready parquet files for K-aggregator (and BLP) cereal
+demand estimation.
+
+* Prerequisites
+
+Raw NielsenIQ Consumer Panel data, transferred via Globus from the
+Kilts Center =kilts-panel= endpoint to:
+#+begin_example
+/global/scratch/fsa/fc_jevons/ligon/Data/NielsenConsumerPanel/
+  2004-2020_Panel_Data/Consumer_Panel_Data_{year}.tgz
+  2021-Onward_Panel_Data/Consumer_Panel_Data_{year}.tgz
+  Master_Files2004-2020.tgz
+#+end_example
+
+* Quick start
+
+#+begin_example
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Extract 2014-2018 only (matching current K-Aggregators sample):
+make extract YEARS="2014 2018"
+
+# Or extract the full 2004-2024 range:
+make extract
+#+end_example
+
+* Configuration
+
+All filtering decisions live in =config/default.yaml=: year range,
+product module, number of products, market definition, aggregation
+frequency, outside-good calibration, demographics.
+
+* Pipeline stages
+
+1. =src/extract.py= --- extract tarballs, write per-year parquets
+2. =src/attributes.py= --- USDA FoodData Central nutrition lookup (TODO)
+3. =src/aggregate_markets.py= --- market-level panel (TODO)
+4. =src/aggregate_households.py= --- household-level panel (TODO)
+5. =src/demographics.py= --- demographic aggregates (TODO)
+
+* Outputs consumed by K-Aggregators
+
+- =data/clean/market_panel.parquet= --- \((t, m, j)\): shares, prices, characteristics
+- =data/clean/household_panel.parquet= --- \((i, t, j)\): household shares
+- =data/clean/household_base_shares.parquet= --- \((i, j)\): predetermined shares
+- =data/clean/demographics_market.parquet= --- \((t, m)\): market-mean demographics
+
+Instrument construction (LF, Bartik, GH) lives in the estimation
+repo, not here.

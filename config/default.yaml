@@ -1,0 +1,31 @@
+# Nielsen Cereal Data Pipeline Configuration
+# All filtering decisions live here, not in code.
+
+# --- Data source ---
+raw_dir: /global/scratch/fsa/fc_jevons/ligon/Data/NielsenConsumerPanel
+modules: [1344]                    # 1344 = Ready-to-eat cereal
+years: [2004, 2024]               # inclusive range
+
+# --- Product selection ---
+n_products: 45                     # top N brands by total expenditure
+nutrition_overrides: config/nutrition_overrides.yaml
+
+# --- Market definition ---
+frequency: quarterly               # quarterly or monthly
+market_def: dma                    # dma, dma_x_retailer, or store
+n_markets: 65                      # top N DMAs by household count
+
+# --- Outside good calibration ---
+market_size_oz_per_day: 4.5        # per-capita cereal consumption capacity
+
+# --- Price deflation ---
+price_deflator: CPI
+cpi_base: "2014Q1"
+
+# --- Bartik / predetermined shares ---
+base_period: "2014Q1"              # for shift-share instruments
+
+# --- Demographics ---
+demographics:
+  - household_income
+  - male_head_age

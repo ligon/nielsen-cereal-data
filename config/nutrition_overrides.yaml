@@ -1,0 +1,11 @@
+# Manual nutrition overrides for brands where the FDC API lookup
+# fails or is ambiguous.  Each entry documents why the override exists.
+#
+# Format:
+#   brand_description:
+#     sugar: 8.0
+#     fiber: 1.5
+#     ...
+#     reason: "FDC has no entry for this brand; values from package label"
+#
+# This file is versioned.  Add new entries at the bottom with a date.
