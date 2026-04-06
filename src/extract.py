@@ -51,7 +51,7 @@ def _read_tsv_from_tar(tf, member):
     f = tf.extractfile(member)
     if f is None:
         raise ValueError(f"Cannot extract {member.name}")
-    return pd.read_csv(f, sep="\t", low_memory=False)
+    return pd.read_csv(f, sep="\t", low_memory=False, encoding="latin-1")
 
 
 def extract_year(raw_dir, year, modules, out_dir):
