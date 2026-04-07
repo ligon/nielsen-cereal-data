@@ -50,15 +50,82 @@ frequency, outside-good calibration, demographics.
 6. =src/aggregate_households.py= --- aggregate to =(household, quarter, brand)= panel with base-period shares
 7. =src/demographics.py= --- market-level and household-level demographic aggregates
 
-* Outputs consumed by K-Aggregators
+* Handoff to K-Aggregators
 
-- =data/clean/market_panel.parquet= --- \((t, m, j)\): shares, prices, characteristics
+** Market panel (main estimation input)
+
+=data/clean/market_panel.parquet= is a near drop-in replacement for
+=Nevo_Replication/data/clean/interm_blp_panel.parquet=.
+
+Index: =(t, m, j)= --- quarter \(\times\) DMA \(\times\) brand.
+
+| Column        | Description                                       |
+|---------------+---------------------------------------------------|
+| =market_ids=  | =Q1Y2014_DMA_501= (pyblp composite key)           |
+| =product_ids= | =brand_code_uc= as string                         |
+| =shares=      | Market share \(S_{jt}\) (servings / market size)   |
+| =prices=      | Price per oz (\$/oz)                               |
+| =sugar= ...   | Product characteristics \(\zeta\) (5 nutrients)    |
+| =Z_sugar= ... | Market aggregates \(Z_{lt} = \sum_j S_{jt} \zeta_{jl}\) |
+| =dma_cd=      | Nielsen DMA code (integer)                         |
+| =quarter=     | Quarter within year (1--4)                         |
+| =panel_year=  | Panel year                                         |
+| =market_size= | Total market potential (oz)                        |
+| =n_hh=        | Households in DMA-year                             |
+
+Nutrition uses a three-tier fallback: FDC (=config/fdc_nutrition.csv=,
+hand-verified) \(\to\) 2021+ productattributes \(\to\) manual overrides
+(=config/nutrition_overrides.yaml=).  All 45 brands have complete
+nutrition with zero missing values.
+
+** Product set
+
+Top 45 brands by total expenditure over the configured year range.
+With the full 2004--2024 window, 38 of 45 brands overlap the old
+2014--2018 selection; 7 brands rotated in/out due to the longer
+ranking period.  The set is determined by =config/default.yaml=
+(=n_products=, =years=).
+
+** Demographics (for agent data construction)
+
+=data/clean/demographics_household.parquet= provides the raw
+materials for constructing agent data on the estimation side.
+
+Index: =(i, t)= --- household \(\times\) quarter.
+
+| Column              | Description                                 |
+|---------------------+---------------------------------------------|
+| =market_ids=        | Composite key, ready to join to market panel |
+| =m=                 | DMA code                                    |
+| =panel_year=        | For deriving =year=                         |
+| =projection_factor= | Nielsen sampling weight                     |
+| =household_income=  | Nielsen bracket code (3--30)                |
+| =male_head_age=     | Nielsen bracket code (0--9)                 |
+
+The estimation side is responsible for: subsampling to N agents per
+market, computing weights, and deriving binary flags (=has_children=,
+=income_over_200k=, etc.) as needed for BLP comparison exercises.
+
+=data/clean/demographics_market.parquet= has projection-factor-weighted
+market-level means =(t, m)= for the same demographic variables.
+
+** Household panel (microdata extension)
+
+=data/clean/household_panel.parquet= --- index =(i, t, j)=, same
+columns as market panel plus household demographics.
+
+=data/clean/household_base_shares.parquet= --- index =(i, j)=,
+predetermined shares from =base_period= (default Q1 2014) for
+shift-share instruments.
+
+** What stays estimation-side
+
+- Instrument construction (LF, Bartik, GH, FWL)
+- Agent data subsampling and weighting
+- Derived demographic indicators
+- CPI deflation (raw prices are nominal)
+
+** Intermediate outputs
+
 - =data/clean/brand_crosswalk.parquet= --- maps =brand_code_uc= (2004--2020) \(\leftrightarrow\) =brand_descr_hms= (2021+)
-- =data/clean/nutrition.parquet= --- per-brand nutrition (sugar, fiber, protein, fat, sodium)
-- =data/clean/household_panel.parquet= --- \((i, t, j)\): household shares, prices
-- =data/clean/household_base_shares.parquet= --- \((i, j)\): predetermined shares from base period
-- =data/clean/demographics_market.parquet= --- \((t, m)\): market-mean demographics
-- =data/clean/demographics_household.parquet= --- \((i, t)\): household-level demographics
-
-Instrument construction (LF, Bartik, GH) lives in the estimation
-repo, not here.
+- =data/clean/nutrition.parquet= --- per-brand nutrition from 2021+ productattributes (577 brands); used as fallback behind FDC
