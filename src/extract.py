@@ -235,12 +235,30 @@ def extract_year(raw_dir, year, modules, module_upcs, out_dir):
             )
 
 
+def _extract_year_worker(args):
+    """Worker for parallel extraction.  Accepts a tuple to play nice
+    with ProcessPoolExecutor.map."""
+    raw_dir, year, modules, module_upcs_path, out_dir = args
+    # Reload module_upcs in worker (can't pickle DataFrames across processes)
+    module_upcs = None
+    if year <= 2020 and module_upcs_path is not None:
+        module_upcs = _load_module_upcs(module_upcs_path, modules)
+    results = extract_year(raw_dir, year, modules, module_upcs, out_dir)
+    return year, results
+
+
 def main():
+    import os
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     parser = argparse.ArgumentParser(
         description="Extract NielsenIQ Consumer Panel data")
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--years", nargs=2, type=int, default=None,
                         help="Override year range (e.g., --years 2014 2018)")
+    parser.add_argument("-j", "--jobs", type=int,
+                        default=min(8, os.cpu_count() or 1),
+                        help="Parallel workers (default: min(8, ncpu))")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -255,10 +273,14 @@ def main():
     out_dir = Path("data/raw")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    years = list(range(year_lo, year_hi + 1))
+    n_workers = min(args.jobs, len(years))
+
     print(f"Extracting NielsenIQ Consumer Panel: {year_lo}-{year_hi}")
     print(f"  Source: {raw_dir}")
     print(f"  Modules: {modules}")
     print(f"  Output: {out_dir}/")
+    print(f"  Workers: {n_workers}")
     print()
 
     # -- Master files (needed for 2004-2020 module filtering) --
@@ -270,26 +292,34 @@ def main():
             print(f"  {name}: {nrows:,} rows  [{h}]")
         print()
 
-    # Load module UPCs for 2004-2020 purchase filtering
-    module_upcs = None
-    if year_lo <= 2020 and master_products_path.exists():
-        module_upcs = _load_module_upcs(master_products_path, modules)
-        print(f"Module {modules} UPCs in master: {len(module_upcs):,}")
-        print()
+    module_upcs_path = (str(master_products_path)
+                        if master_products_path.exists() else None)
 
-    # -- Annual files --
+    # -- Annual files (parallel) --
+    work_items = [
+        (raw_dir, year, modules, module_upcs_path, str(out_dir))
+        for year in years
+    ]
+
     all_results = {}
-    for year in range(year_lo, year_hi + 1):
-        print(f"Year {year}...")
-        results = extract_year(raw_dir, year, modules, module_upcs, out_dir)
-        for name, (path, nrows, h) in results.items():
-            if "purchases" not in name:  # purchases already printed with filter info
-                print(f"  {name}: {nrows:,} rows  [{h}]")
-        all_results[year] = results
+    if n_workers <= 1:
+        # Sequential fallback
+        for item in work_items:
+            year, results = _extract_year_worker(item)
+            _print_year_results(year, results)
+            all_results[year] = results
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_extract_year_worker, item): item[1]
+                       for item in work_items}
+            for future in as_completed(futures):
+                year, results = future.result()
+                _print_year_results(year, results)
+                all_results[year] = results
     print()
 
     # -- Summary --
-    years_ok = [y for y, r in all_results.items() if r]
+    years_ok = sorted(y for y, r in all_results.items() if r)
     total_purch = sum(
         r["purchases"][1] for r in all_results.values() if "purchases" in r
     )
@@ -299,6 +329,21 @@ def main():
     print(f"Done. {len(years_ok)} years extracted ({min(years_ok)}-{max(years_ok)}).")
     print(f"  Cereal purchase rows: {total_purch:,}")
     print(f"  Total trip rows:      {total_trips:,}")
+
+
+def _print_year_results(year, results):
+    """Print extraction results for one year."""
+    if not results:
+        print(f"Year {year}: SKIPPED")
+        return
+    purch = results.get("purchases")
+    purch_str = f"{purch[1]:,} cereal purchases" if purch else "no purchases"
+    trips = results.get("trips")
+    trips_str = f"{trips[1]:,} trips" if trips else ""
+    panel = results.get("panelists")
+    panel_str = f"{panel[1]:,} HH" if panel else ""
+    parts = [p for p in [purch_str, trips_str, panel_str] if p]
+    print(f"Year {year}: {', '.join(parts)}")
 
 
 if __name__ == "__main__":
