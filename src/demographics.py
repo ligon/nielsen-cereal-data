@@ -231,11 +231,12 @@ def compute_demographics(cfg, years=None):
     print("\n[4/4] Computing household-level demographics...")
 
     demog_hh = (
-        panelists_qt[["household_code", "t", "DMA_Cd"] + available_demog]
+        panelists_qt[["household_code", "t", "DMA_Cd", "panel_year",
+                       "projection_factor"] + available_demog]
         .rename(columns={"household_code": "i", "DMA_Cd": "m"})
-        .set_index(["i", "t"])
-        .sort_index()
     )
+    demog_hh["market_ids"] = demog_hh["t"] + "_DMA_" + demog_hh["m"].astype(int).astype(str)
+    demog_hh = demog_hh.set_index(["i", "t"]).sort_index()
 
     print(f"  Shape: {demog_hh.shape}")
     print(f"  Households: {demog_hh.index.get_level_values('i').nunique():,}")

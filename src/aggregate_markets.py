@@ -703,15 +703,23 @@ def aggregate_markets(cfg, years=None):
     panel = panel.merge(z_agg, on=["t", "m"], how="left")
     print(f"  Z_agg computed: {z_agg_cols}")
 
-    # pyblp-compatible identifiers
+    # pyblp / K-Aggregators compatible columns
     panel["market_ids"] = panel["t"] + "_DMA_" + panel["m"].astype(str)
     panel["product_ids"] = panel["j"].astype(str)
+    panel["dma_cd"] = panel["m"]
+    dates = pd.to_datetime(
+        panel["t"].str.extract(r"Q(\d)Y(\d{4})").rename(columns={0: "q", 1: "y"})
+        .assign(m=lambda d: d["q"].astype(int) * 3)
+        .apply(lambda r: f"{r['y']}-{r['m']:02d}-01", axis=1)
+    )
+    panel["quarter"] = dates.dt.quarter
 
     # Rename to match pyblp / K-Aggregators conventions
     panel = panel.rename(columns={"S": "shares", "p": "prices"})
 
     # Select and order output columns
     out_cols = (["t", "m", "j", "market_ids", "product_ids",
+                 "dma_cd", "quarter",
                  "shares", "prices", "brand_descr"]
                 + zeta_cols + z_agg_cols
                 + ["servings", "revenue", "n_transactions",
