@@ -597,8 +597,42 @@ def aggregate_markets(cfg, years=None):
     # Rename for output
     panel = agg.rename(columns={"DMA_Cd": "m", "brand_code_uc": "j"})
 
+    # ------------------------------------------------------------------
+    # Merge nutrition (zeta) and compute Z_agg
+    # ------------------------------------------------------------------
+    zeta_cols = ["sugar", "fiber", "protein", "fat", "sodium"]
+    nutrition_path = clean_dir / "nutrition.parquet"
+    if nutrition_path.exists():
+        nutrition = pd.read_parquet(nutrition_path)
+        # nutrition is keyed by brand_code_uc; panel uses j
+        nut_join = (nutrition[["brand_code_uc"] + zeta_cols]
+                    .rename(columns={"brand_code_uc": "j"}))
+        panel = panel.merge(nut_join, on="j", how="left")
+        n_with_zeta = panel[zeta_cols[0]].notna().sum()
+        print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells "
+              f"have zeta")
+    else:
+        print("  WARNING: nutrition.parquet not found; skipping zeta merge")
+        for c in zeta_cols:
+            panel[c] = np.nan
+
+    # Z_agg: market-time aggregates Z_lt = sum_j S_jt * zeta_jl
+    # These are share-weighted sums of characteristics per (t, m) cell.
+    for col in zeta_cols:
+        panel[f"Z_{col}"] = panel["S"] * panel[col]
+    z_agg_cols = [f"Z_{c}" for c in zeta_cols]
+    z_agg = (
+        panel.groupby(["t", "m"])[z_agg_cols]
+        .sum()
+        .reset_index()
+    )
+    # Drop the per-cell S*zeta columns, merge back the (t,m) totals
+    panel = panel.drop(columns=z_agg_cols)
+    panel = panel.merge(z_agg, on=["t", "m"], how="left")
+    print(f"  Z_agg computed: {z_agg_cols}")
+
     # Select and order output columns
-    out_cols = ["t", "m", "j", "S", "p", "brand_descr",
+    out_cols = ["t", "m", "j", "S", "p", "brand_descr"] + zeta_cols + z_agg_cols + [
                 "servings", "revenue", "n_transactions",
                 "market_size", "n_hh", "panel_year"]
     panel = panel[out_cols].copy()

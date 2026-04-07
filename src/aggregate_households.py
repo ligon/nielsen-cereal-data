@@ -235,12 +235,62 @@ def aggregate_households(cfg, years=None):
             f"Max = {hh_quarter_share.max():.4f}"
         )
 
-    # Rename and index
+    # Rename for output
     panel = agg.rename(columns={
         "household_code": "i", "brand_code_uc": "j",
+        "DMA_Cd": "m",
     })
-    out_cols = ["i", "t", "j", "S", "p", "DMA_Cd",
-                "servings", "revenue", "n_transactions", "panel_year"]
+
+    # ------------------------------------------------------------------
+    # Merge nutrition (zeta)
+    # ------------------------------------------------------------------
+    zeta_cols = ["sugar", "fiber", "protein", "fat", "sodium"]
+    nutrition_path = clean_dir / "nutrition.parquet"
+    if nutrition_path.exists():
+        nutrition = pd.read_parquet(nutrition_path)
+        nut_join = (nutrition[["brand_code_uc"] + zeta_cols]
+                    .rename(columns={"brand_code_uc": "j"}))
+        panel = panel.merge(nut_join, on="j", how="left")
+        n_with_zeta = panel[zeta_cols[0]].notna().sum()
+        print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells")
+    else:
+        print("  WARNING: nutrition.parquet not found; skipping zeta merge")
+        for c in zeta_cols:
+            panel[c] = np.nan
+
+    # Z_i: household-level aggregates Z_il = sum_j S_ij * zeta_jl
+    for col in zeta_cols:
+        panel[f"Z_{col}"] = panel["S"] * panel[col]
+    z_cols = [f"Z_{c}" for c in zeta_cols]
+    z_hh = (
+        panel.groupby(["i", "t"])[z_cols]
+        .sum()
+        .reset_index()
+    )
+    panel = panel.drop(columns=z_cols)
+    panel = panel.merge(z_hh, on=["i", "t"], how="left")
+    print(f"  Z_i computed: {z_cols}")
+
+    # ------------------------------------------------------------------
+    # Merge demographics
+    # ------------------------------------------------------------------
+    demog_path = clean_dir / "demographics_household.parquet"
+    if demog_path.exists():
+        demog = pd.read_parquet(demog_path)
+        # demog is indexed by (i, t); reset for merge
+        demog = demog.reset_index()
+        demog_cols = [c for c in demog.columns if c not in ["i", "t", "m"]]
+        panel = panel.merge(demog[["i", "t"] + demog_cols],
+                            on=["i", "t"], how="left")
+        n_with_demog = panel[demog_cols[0]].notna().sum()
+        print(f"  Demographics merged: {n_with_demog:,} / {len(panel):,} cells")
+    else:
+        print("  WARNING: demographics_household.parquet not found")
+        demog_cols = []
+
+    out_cols = (["i", "t", "j", "S", "p", "m"]
+                + zeta_cols + z_cols + demog_cols
+                + ["servings", "revenue", "n_transactions", "panel_year"])
     panel = panel[out_cols].set_index(["i", "t", "j"]).sort_index()
 
     # ------------------------------------------------------------------
@@ -268,10 +318,10 @@ def aggregate_households(cfg, years=None):
             f"{sorted(panel.index.get_level_values('t').unique())[:5]}..."
         )
         base_shares = pd.DataFrame(
-            columns=["i", "j", "S_base", "DMA_Cd"]).set_index(["i", "j"])
+            columns=["i", "j", "S_base", "m"]).set_index(["i", "j"])
     else:
         base_shares = (
-            base[["S", "DMA_Cd"]]
+            base[["S", "m"]]
             .rename(columns={"S": "S_base"})
             .droplevel("t")
         )
