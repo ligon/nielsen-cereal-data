@@ -19,12 +19,17 @@ Usage:
                                     [--years 2014 2018]
 """
 import argparse
+import os
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import yaml
+
+# Parquet reads are I/O + decompression (releases the GIL), so threads help.
+_N_WORKERS = min(24, os.cpu_count() or 1)
 
 
 # ---------------------------------------------------------------------------
@@ -37,162 +42,162 @@ def load_config(path="config/default.yaml"):
 
 
 # ---------------------------------------------------------------------------
-# Data loading helpers
+# Per-file readers (submitted to the shared thread pool)
 # ---------------------------------------------------------------------------
 
-def _load_purchases(raw_dir, years):
-    """Load and harmonize purchase parquets across eras.
+def _read_one_purchase(raw_dir, year):
+    """Read and harmonize one year's purchase parquet."""
+    path = raw_dir / f"purchases_{year}.parquet"
+    if not path.exists():
+        return None
 
-    Returns a DataFrame with columns:
-      trip_code_uc, upc, quantity, total_price_paid,
-      brand_code_uc, brand_descr, size1_amount, size1_units, panel_year
-    """
-    dfs = []
-    for year in years:
-        path = raw_dir / f"purchases_{year}.parquet"
-        if not path.exists():
-            print(f"  WARNING: {path} not found, skipping")
-            continue
+    df = pd.read_parquet(path)
+    df["panel_year"] = year
 
-        df = pd.read_parquet(path)
-        df["panel_year"] = year
-
-        if year <= 2020:
-            # Legacy era: brand_code_uc and size1_amount already merged
-            # from master at extraction time.
-            keep = ["trip_code_uc", "upc", "quantity", "total_price_paid",
-                    "brand_code_uc", "brand_descr", "size1_amount",
-                    "size1_units", "panel_year"]
-            # Ensure all columns exist
-            for c in keep:
-                if c not in df.columns:
-                    raise ValueError(f"Missing column {c} in {path}")
-            dfs.append(df[keep])
-
-        else:
-            # 2021+ era: different column names, size1_amount_hms is
-            # encoded as integer-string in units of 0.001 (e.g. "0012200"
-            # = 12.200 oz).
-            out = pd.DataFrame()
-            out["trip_code_uc"] = df["trip_code_uc"]
-            out["upc"] = df["upc"]
-            out["quantity"] = df["quantity"]
-            out["total_price_paid"] = df["total_price_paid"]
-            out["brand_code_uc"] = np.nan  # filled later via crosswalk
-            out["brand_descr"] = df["brand_descr_hms"]
-            out["size1_amount"] = (
-                pd.to_numeric(df["size1_amount_hms"], errors="coerce") / 1000.0
-            )
-            out["size1_units"] = df["size1_unit_hms"].str.strip()
-            out["panel_year"] = year
-            dfs.append(out)
-
-    if not dfs:
-        raise FileNotFoundError(f"No purchase parquets found in {raw_dir}")
-
-    purchases = pd.concat(dfs, ignore_index=True)
-    print(f"  Loaded {len(purchases):,} purchases from "
-          f"{purchases['panel_year'].nunique()} years")
-    return purchases
-
-
-def _load_trips(raw_dir, years):
-    """Load trip parquets.  Keep only columns needed for the merge."""
-    dfs = []
-    for year in years:
-        path = raw_dir / f"trips_{year}.parquet"
-        if not path.exists():
-            continue
-        df = pd.read_parquet(
-            path,
-            columns=["trip_code_uc", "household_code", "purchase_date",
-                      "panel_year"]
+    if year <= 2020:
+        keep = ["trip_code_uc", "upc", "quantity", "total_price_paid",
+                "brand_code_uc", "brand_descr", "size1_amount",
+                "size1_units", "panel_year"]
+        for c in keep:
+            if c not in df.columns:
+                raise ValueError(f"Missing column {c} in {path}")
+        return df[keep]
+    else:
+        out = pd.DataFrame()
+        out["trip_code_uc"] = df["trip_code_uc"]
+        out["upc"] = df["upc"]
+        out["quantity"] = df["quantity"]
+        out["total_price_paid"] = df["total_price_paid"]
+        out["brand_code_uc"] = np.nan  # filled later via crosswalk
+        out["brand_descr"] = df["brand_descr_hms"]
+        out["size1_amount"] = (
+            pd.to_numeric(df["size1_amount_hms"], errors="coerce") / 1000.0
         )
-        dfs.append(df)
-
-    if not dfs:
-        raise FileNotFoundError(f"No trip parquets found in {raw_dir}")
-
-    trips = pd.concat(dfs, ignore_index=True)
-    print(f"  Loaded {len(trips):,} trips")
-    return trips
+        out["size1_units"] = df["size1_unit_hms"].str.strip()
+        out["panel_year"] = year
+        return out
 
 
-def _load_panelists_with_dma(raw_dir, years, fips_to_dma=None):
-    """Load panelist parquets and extract (household_code, panel_year, DMA_Cd).
+def _read_one_trip(raw_dir, year):
+    """Read one year's trip parquet (selected columns only)."""
+    path = raw_dir / f"trips_{year}.parquet"
+    if not path.exists():
+        return None
+    return pd.read_parquet(
+        path,
+        columns=["trip_code_uc", "household_code", "purchase_date",
+                  "panel_year"]
+    )
 
-    Legacy (2004-2020): DMA_Cd is a direct column (title-case: "DMA_Cd").
-    New (2021+): DMA is missing; map via fips_state_code + fips_county_code.
-    """
-    dfs = []
-    for year in years:
-        path = raw_dir / f"panelists_{year}.parquet"
-        if not path.exists():
-            continue
 
-        df = pd.read_parquet(path)
+def _read_one_panelist(raw_dir, year, fips_to_dma):
+    """Read and harmonize one year's panelist parquet."""
+    path = raw_dir / f"panelists_{year}.parquet"
+    if not path.exists():
+        return None
 
-        if year <= 2020:
-            # Legacy era: title-case column names
-            out = pd.DataFrame()
-            out["household_code"] = df["Household_Cd"]
-            out["panel_year"] = df["Panel_Year"]
-            out["DMA_Cd"] = df["DMA_Cd"]
-            out["DMA_Name"] = df["DMA_Name"]
-            out["projection_factor"] = df["Projection_Factor"]
-            dfs.append(out)
+    df = pd.read_parquet(path)
+
+    if year <= 2020:
+        out = pd.DataFrame()
+        out["household_code"] = df["Household_Cd"]
+        out["panel_year"] = df["Panel_Year"]
+        out["DMA_Cd"] = df["DMA_Cd"]
+        out["DMA_Name"] = df["DMA_Name"]
+        out["projection_factor"] = df["Projection_Factor"]
+        return out
+    else:
+        out = pd.DataFrame()
+        out["household_code"] = df["household_code"]
+        out["panel_year"] = df["panel_year"]
+        out["projection_factor"] = df["projection_factor"]
+
+        if fips_to_dma is not None:
+            fips = df[["fips_state_code", "fips_county_code"]].copy()
+            mapped = fips.merge(fips_to_dma, how="left",
+                                left_on=["fips_state_code", "fips_county_code"],
+                                right_on=["fips_state_code", "fips_county_code"])
+            out["DMA_Cd"] = mapped["DMA_Cd"].values
+            out["DMA_Name"] = mapped["DMA_Name"].values
+            n_miss = out["DMA_Cd"].isna().sum()
+            if n_miss > 0:
+                warnings.warn(
+                    f"{year}: {n_miss}/{len(out)} panelists could not be "
+                    f"mapped to a DMA via FIPS county ({n_miss/len(out):.1%})"
+                )
         else:
-            # 2021+ era: lowercase column names, no DMA column
-            out = pd.DataFrame()
-            out["household_code"] = df["household_code"]
-            out["panel_year"] = df["panel_year"]
-            out["projection_factor"] = df["projection_factor"]
+            out["DMA_Cd"] = np.nan
+            out["DMA_Name"] = np.nan
+            warnings.warn(f"{year}: No FIPS->DMA mapping; all DMA values are NaN")
 
-            if fips_to_dma is not None:
-                # Map FIPS county -> DMA
-                fips = df[["fips_state_code", "fips_county_code"]].copy()
-                mapped = fips.merge(fips_to_dma, how="left",
-                                    left_on=["fips_state_code", "fips_county_code"],
-                                    right_on=["fips_state_code", "fips_county_code"])
-                out["DMA_Cd"] = mapped["DMA_Cd"].values
-                out["DMA_Name"] = mapped["DMA_Name"].values
-                n_miss = out["DMA_Cd"].isna().sum()
-                if n_miss > 0:
-                    warnings.warn(
-                        f"{year}: {n_miss}/{len(out)} panelists could not be "
-                        f"mapped to a DMA via FIPS county ({n_miss/len(out):.1%})"
-                    )
-            else:
-                out["DMA_Cd"] = np.nan
-                out["DMA_Name"] = np.nan
-                warnings.warn(f"{year}: No FIPS->DMA mapping; all DMA values are NaN")
-
-            dfs.append(out)
-
-    if not dfs:
-        raise FileNotFoundError(f"No panelist parquets found in {raw_dir}")
-
-    panelists = pd.concat(dfs, ignore_index=True)
-    print(f"  Loaded {len(panelists):,} panelist-years")
-    return panelists
+        return out
 
 
-def _build_fips_to_dma(raw_dir):
+def _read_fips_cols(path):
+    """Read FIPS/DMA columns from one legacy panelist file."""
+    return pd.read_parquet(path, columns=["Fips_State_Cd", "Fips_County_Cd",
+                                           "DMA_Cd", "DMA_Name"])
+
+
+# ---------------------------------------------------------------------------
+# Bulk loader: one pool for all I/O
+# ---------------------------------------------------------------------------
+
+def _load_all_data(raw_dir, years, fips_to_dma):
+    """Read purchases, trips, and panelists for all years in a single pool.
+
+    Parquet reads are I/O + decompression (release the GIL), so one
+    ThreadPoolExecutor with ~N_WORKERS threads keeps all cores busy
+    across every file type simultaneously.
+
+    Returns (purchases_df, trips_df, panelists_df).
+    """
+    with ThreadPoolExecutor(max_workers=_N_WORKERS) as pool:
+        # Submit every file read at once — ~63 reads for 21 years
+        fut_purchases = {
+            pool.submit(_read_one_purchase, raw_dir, y): y for y in years
+        }
+        fut_trips = {
+            pool.submit(_read_one_trip, raw_dir, y): y for y in years
+        }
+        fut_panelists = {
+            pool.submit(_read_one_panelist, raw_dir, y, fips_to_dma): y
+            for y in years
+        }
+
+        def _collect(futures, label):
+            dfs = [f.result() for f in futures]
+            dfs = [d for d in dfs if d is not None]
+            if not dfs:
+                raise FileNotFoundError(
+                    f"No {label} parquets found in {raw_dir}")
+            out = pd.concat(dfs, ignore_index=True)
+            print(f"  {label}: {len(out):,} rows from {len(dfs)} years")
+            return out
+
+        purchases = _collect(fut_purchases, "purchases")
+        trips = _collect(fut_trips, "trips")
+        panelists = _collect(fut_panelists, "panelists")
+
+    return purchases, trips, panelists
+
+
+def _build_fips_to_dma(raw_dir, pool=None):
     """Build a FIPS (state, county) -> DMA mapping from legacy panelist files.
 
     Uses all available legacy panelist files to maximize county coverage.
+    If *pool* is provided, submits reads there; otherwise creates its own.
     """
-    dfs = []
-    for path in sorted(raw_dir.glob("panelists_*.parquet")):
-        year = int(path.stem.split("_")[1])
-        if year > 2020:
-            continue
-        df = pd.read_parquet(path, columns=["Fips_State_Cd", "Fips_County_Cd",
-                                             "DMA_Cd", "DMA_Name"])
-        dfs.append(df)
-
-    if not dfs:
+    paths = [p for p in sorted(raw_dir.glob("panelists_*.parquet"))
+             if int(p.stem.split("_")[1]) <= 2020]
+    if not paths:
         return None
+
+    if pool is not None:
+        dfs = list(pool.map(_read_fips_cols, paths))
+    else:
+        with ThreadPoolExecutor(max_workers=_N_WORKERS) as own_pool:
+            dfs = list(own_pool.map(_read_fips_cols, paths))
 
     all_fips = pd.concat(dfs, ignore_index=True)
     # Take the mode DMA for each FIPS county (should be unique, but be safe)
@@ -392,13 +397,12 @@ def aggregate_markets(cfg, years=None):
     fips_to_dma = _build_fips_to_dma(raw_dir)
 
     # ------------------------------------------------------------------
-    # Step 2: Load data
+    # Step 2: Load all data (single thread pool for all file I/O)
     # ------------------------------------------------------------------
     print("\n[2/7] Loading data...")
-    purchases = _load_purchases(raw_dir, available_years)
-    trips = _load_trips(raw_dir, available_years)
-    panelists = _load_panelists_with_dma(raw_dir, available_years,
-                                          fips_to_dma=fips_to_dma)
+    purchases, trips, panelists = _load_all_data(
+        raw_dir, available_years, fips_to_dma
+    )
 
     # ------------------------------------------------------------------
     # Step 3: Apply brand crosswalk for 2021+ data
@@ -498,21 +502,32 @@ def aggregate_markets(cfg, years=None):
     merged["servings_oz"] = merged["quantity"] * merged["size1_amount"]
 
     # Group by (quarter, DMA, brand).
-    # Also carry panel_year through for the market-size merge.  When a
-    # quarter straddles a panel_year boundary (rare edge case with trips
-    # filed in Dec of the prior calendar year), the modal panel_year
-    # within each cell is used.
+    # Pure Cython path — no Python lambdas in the agg.
+    grp_cols = ["t", "DMA_Cd", "brand_code_uc"]
     agg = (
         merged
-        .groupby(["t", "DMA_Cd", "brand_code_uc"])
+        .groupby(grp_cols)
         .agg(
             servings=("servings_oz", "sum"),
             revenue=("total_price_paid", "sum"),
             n_transactions=("total_price_paid", "count"),
-            panel_year=("panel_year", lambda x: x.mode().iloc[0]),
         )
         .reset_index()
     )
+
+    # Dominant panel_year per cell: the year contributing the most
+    # revenue.  Handles the rare quarter-boundary case where a cell
+    # spans two panel_years; picks the one with more spending.
+    dominant_year = (
+        merged
+        .groupby(grp_cols + ["panel_year"])["total_price_paid"]
+        .sum()
+        .reset_index()
+        .sort_values("total_price_paid", ascending=False)
+        .drop_duplicates(subset=grp_cols)
+        [grp_cols + ["panel_year"]]
+    )
+    agg = agg.merge(dominant_year, on=grp_cols, how="left")
 
     # Price = revenue / servings (per oz)
     agg["p"] = agg["revenue"] / agg["servings"]

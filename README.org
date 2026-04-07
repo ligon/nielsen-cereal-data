@@ -21,14 +21,17 @@ Kilts Center =kilts-panel= endpoint to:
 * Quick start
 
 #+begin_example
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+make venv              # one-time setup
+source .venv/bin/activate
 
-# Extract 2014-2018 only (matching current K-Aggregators sample):
-make extract YEARS="2014 2018"
+make all               # full 2004-2024 pipeline
+make all YEARS="2014 2018"   # just the old sample period
 
-# Or extract the full 2004-2024 range:
-make extract
+# Or run individual stages:
+make extract YEARS="2014 2018" JOBS=8
+make crosswalk
+make nutrition
+make markets
 #+end_example
 
 * Configuration
@@ -39,18 +42,23 @@ frequency, outside-good calibration, demographics.
 
 * Pipeline stages
 
-1. =src/extract.py= --- extract tarballs, write per-year parquets
-2. =src/attributes.py= --- USDA FoodData Central nutrition lookup (TODO)
-3. =src/aggregate_markets.py= --- market-level panel (TODO)
-4. =src/aggregate_households.py= --- household-level panel (TODO)
-5. =src/demographics.py= --- demographic aggregates (TODO)
+1. =src/extract.py= --- extract tarballs, write per-year parquets to =data/raw/=
+2. =src/brand_crosswalk.py= --- map brand codes across the 2020/2021 NielsenIQ naming break
+3. =src/select_products.py= --- select top-N brands by total expenditure
+4. =src/nutrition.py= --- merge FDC nutrition data (=config/fdc_nutrition.csv=) with 2021+ productattributes parsing; manual overrides in =config/nutrition_overrides.yaml=
+5. =src/aggregate_markets.py= --- aggregate to =(quarter, DMA, brand)= market-level panel
+6. =src/aggregate_households.py= --- aggregate to =(household, quarter, brand)= panel with base-period shares
+7. =src/demographics.py= --- market-level and household-level demographic aggregates
 
 * Outputs consumed by K-Aggregators
 
 - =data/clean/market_panel.parquet= --- \((t, m, j)\): shares, prices, characteristics
-- =data/clean/household_panel.parquet= --- \((i, t, j)\): household shares
-- =data/clean/household_base_shares.parquet= --- \((i, j)\): predetermined shares
+- =data/clean/brand_crosswalk.parquet= --- maps =brand_code_uc= (2004--2020) \(\leftrightarrow\) =brand_descr_hms= (2021+)
+- =data/clean/nutrition.parquet= --- per-brand nutrition (sugar, fiber, protein, fat, sodium)
+- =data/clean/household_panel.parquet= --- \((i, t, j)\): household shares, prices
+- =data/clean/household_base_shares.parquet= --- \((i, j)\): predetermined shares from base period
 - =data/clean/demographics_market.parquet= --- \((t, m)\): market-mean demographics
+- =data/clean/demographics_household.parquet= --- \((i, t)\): household-level demographics
 
 Instrument construction (LF, Bartik, GH) lives in the estimation
 repo, not here.

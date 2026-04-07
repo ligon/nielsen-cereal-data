@@ -102,8 +102,50 @@ def _convert_unit(val, from_unit, to_unit):
 
 
 def parse_nutrition_column(series, target_unit="GRAM"):
-    """Vectorized parse of a nutrition string column to float."""
-    return series.map(lambda x: _parse_nutrition_value(x, target_unit))
+    """Parse a nutrition string column to float using vectorized string ops.
+
+    Handles: "2 GRAM", "0 TO 1 GRAM", "200 MILLIGRAM", "NOT STATED", NaN.
+    """
+    s = series.astype(str).str.strip().str.upper()
+
+    # Mark unparseable values
+    invalid = s.isin(["", "NAN", "NONE"]) | s.str.contains("NOT STATED|NOT AVAILABLE",
+                                                             na=False)
+    result = pd.array([np.nan] * len(s), dtype="Float64")
+
+    # --- Range pattern: "0 TO 1 GRAM" -> midpoint ---
+    range_match = s.str.extract(
+        r"^\s*(?P<lo>[\d.]+)\s+TO\s+(?P<hi>[\d.]+)\s+(?P<unit>GRAM|MILLIGRAM)\s*$",
+        expand=True,
+    )
+    has_range = range_match["lo"].notna() & ~invalid
+    if has_range.any():
+        lo = pd.to_numeric(range_match.loc[has_range, "lo"])
+        hi = pd.to_numeric(range_match.loc[has_range, "hi"])
+        vals = (lo + hi) / 2.0
+        units = range_match.loc[has_range, "unit"]
+        if target_unit == "GRAM":
+            vals[units == "MILLIGRAM"] /= 1000.0
+        else:
+            vals[units == "GRAM"] *= 1000.0
+        result[has_range] = vals.values
+
+    # --- Single-value pattern: "2 GRAM" or "200 MILLIGRAM" ---
+    single_match = s.str.extract(
+        r"^\s*(?P<val>[\d.]+)\s+(?P<unit>GRAM|MILLIGRAM)\s*$",
+        expand=True,
+    )
+    has_single = single_match["val"].notna() & ~invalid & ~has_range
+    if has_single.any():
+        vals = pd.to_numeric(single_match.loc[has_single, "val"])
+        units = single_match.loc[has_single, "unit"]
+        if target_unit == "GRAM":
+            vals[units == "MILLIGRAM"] /= 1000.0
+        else:
+            vals[units == "GRAM"] *= 1000.0
+        result[has_single] = vals.values
+
+    return pd.Series(result, index=series.index, dtype="float64")
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +167,8 @@ def _build_crosswalk(raw_dir, modules):
               .rename(columns={"brand_descr": "brand_descr_legacy"}))
 
     # 2021+ era: purchases have brand_descr_hms
-    new_files = sorted(raw.glob("purchases_202*.parquet"))
+    new_files = sorted(f for f in raw.glob("purchases_202*.parquet")
+                       if int(f.stem.split("_")[1]) >= 2021)
     if not new_files:
         return pd.DataFrame(columns=["brand_code_uc", "brand_descr_legacy",
                                       "brand_descr_2021"])
@@ -180,7 +223,8 @@ def build_nutrition(raw_dir, modules):
     print(f"Loaded productattributes: {len(pa):,} UPCs")
 
     # ---- 2. Filter to cereal UPCs via 2021 purchases ----
-    purch_files = sorted(raw.glob("purchases_202*.parquet"))
+    purch_files = sorted(f for f in raw.glob("purchases_202*.parquet")
+                         if int(f.stem.split("_")[1]) >= 2021)
     if not purch_files:
         raise FileNotFoundError(f"No 2021+ purchase files in {raw}")
 
@@ -291,6 +335,27 @@ def main():
     clean_dir.mkdir(parents=True, exist_ok=True)
 
     result, brand_nutrition_2021 = build_nutrition(raw_dir, modules)
+
+    # Apply manual overrides
+    overrides_path = cfg.get("nutrition_overrides", "config/nutrition_overrides.yaml")
+    if Path(overrides_path).exists():
+        with open(overrides_path) as f:
+            overrides = yaml.safe_load(f) or {}
+        nutrient_names = ["sugar", "fiber", "protein", "fat", "sodium"]
+        n_applied = 0
+        for brand_descr, vals in overrides.items():
+            if not isinstance(vals, dict):
+                continue
+            mask = result["brand_descr"] == brand_descr
+            if mask.any():
+                for col in nutrient_names:
+                    if col in vals:
+                        result.loc[mask, col] = vals[col]
+                reason = vals.get("reason", "")
+                print(f"  Override: {brand_descr}  ({reason})")
+                n_applied += 1
+        if n_applied:
+            print(f"  Applied {n_applied} nutrition overrides")
 
     validate_nutrition(result)
 

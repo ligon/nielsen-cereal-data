@@ -10,10 +10,14 @@ Usage:
     python src/select_products.py [--config config/default.yaml]
 """
 import argparse
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
 import yaml
+
+_N_WORKERS = min(24, os.cpu_count() or 1)
 
 
 def load_config(path="config/default.yaml"):
@@ -22,14 +26,12 @@ def load_config(path="config/default.yaml"):
 
 
 def _load_all_purchases(raw_dir):
-    """Concatenate all per-year purchase parquets."""
+    """Concatenate all per-year purchase parquets (threaded)."""
     files = sorted(Path(raw_dir).glob("purchases_*.parquet"))
     if not files:
         raise FileNotFoundError(f"No purchase parquets in {raw_dir}")
-    dfs = []
-    for f in files:
-        df = pd.read_parquet(f)
-        dfs.append(df)
+    with ThreadPoolExecutor(max_workers=_N_WORKERS) as pool:
+        dfs = list(pool.map(pd.read_parquet, files))
     out = pd.concat(dfs, ignore_index=True)
     print(f"Loaded {len(out):,} cereal purchases from {len(files)} years")
     return out

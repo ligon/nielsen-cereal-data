@@ -9,3 +9,16 @@
 #     reason: "FDC has no entry for this brand; values from package label"
 #
 # This file is versioned.  Add new entries at the bottom with a date.
+
+# 2026-04-06: NielsenIQ productattributes records sodium in GRAM
+# instead of MILLIGRAM for a handful of UPCs.  The parser converts
+# faithfully, producing absurd values (45g = 45000mg per serving).
+# Override with plausible values from package labels / similar products.
+
+FROM THE FIELDS':
+  sodium: 450.0
+  reason: "Raw data says '45 GRAM' sodium; clearly MILLIGRAM (45mg realistic for granola)"
+
+KEL SPL K NRSH BERRIES&PEACHES:
+  sodium: 200.0
+  reason: "One UPC has '200 GRAM' sodium; other Special K UPCs average ~200 MILLIGRAM"

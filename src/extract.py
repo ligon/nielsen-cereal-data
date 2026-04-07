@@ -257,8 +257,8 @@ def main():
     parser.add_argument("--years", nargs=2, type=int, default=None,
                         help="Override year range (e.g., --years 2014 2018)")
     parser.add_argument("-j", "--jobs", type=int,
-                        default=min(8, os.cpu_count() or 1),
-                        help="Parallel workers (default: min(8, ncpu))")
+                        default=min(os.cpu_count() or 1, 21),
+                        help="Parallel workers (default: min(ncpu, n_years))")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
