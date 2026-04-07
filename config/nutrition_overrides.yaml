@@ -22,3 +22,21 @@ FROM THE FIELDS':
 KEL SPL K NRSH BERRIES&PEACHES:
   sodium: 200.0
   reason: "One UPC has '200 GRAM' sodium; other Special K UPCs average ~200 MILLIGRAM"
+
+# 2026-04-06: Brands missing from both FDC and productattributes crosswalk.
+
+G M WHEATIES:
+  sugar: 4.0
+  fiber: 3.0
+  protein: 3.0
+  fat: 0.5
+  sodium: 190.0
+  reason: "NielsenIQ says 'NOT STATED' for sugar; values from USDA FDC 746771 (Wheaties, 27g serving)"
+
+CTL BR:
+  sugar: 8.5
+  fiber: 2.8
+  protein: 3.1
+  fat: 1.4
+  sodium: 180.0
+  reason: "Private-label catch-all with no crosswalk to 2021+ era; sugar mean from 441 CTL BR UPCs in productattributes, other nutrients from ~1360 UPCs, sodium estimated from category median"

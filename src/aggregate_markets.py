@@ -262,6 +262,85 @@ def _apply_brand_crosswalk(purchases, raw_dir, modules):
 
 
 # ---------------------------------------------------------------------------
+# Nutrition merge (FDC -> productattributes -> overrides)
+# ---------------------------------------------------------------------------
+
+def _merge_nutrition(panel, zeta_cols, fdc_path, nutrition_path, cfg):
+    """Merge nutrition into panel using a three-tier fallback chain.
+
+    1. FDC (config/fdc_nutrition.csv) — hand-verified, primary source
+    2. Productattributes (data/clean/nutrition.parquet) — 2021+ NielsenIQ
+    3. Overrides (config/nutrition_overrides.yaml) — manual entries for
+       brands missing from both sources
+    """
+    fdc_path = Path(fdc_path)
+    nutrition_path = Path(nutrition_path)
+
+    if fdc_path.exists():
+        fdc = pd.read_csv(fdc_path)[["brand_code_uc"] + zeta_cols]
+        fdc = fdc.rename(columns={"brand_code_uc": "j"})
+        panel = panel.merge(fdc, on="j", how="left")
+        n_fdc = panel[zeta_cols[0]].notna().sum()
+        print(f"  FDC nutrition: {n_fdc:,} / {len(panel):,} cells")
+
+        # Fill gaps from productattributes
+        if nutrition_path.exists():
+            pa_nut = pd.read_parquet(nutrition_path)
+            pa_lookup = (pa_nut.set_index("brand_code_uc")[zeta_cols]
+                         .rename_axis("j"))
+            for col in zeta_cols:
+                mask = panel[col].isna()
+                if mask.any():
+                    panel.loc[mask, col] = (
+                        panel.loc[mask, "j"].map(pa_lookup[col])
+                    )
+            n_after = panel[zeta_cols[0]].notna().sum()
+            n_filled = n_after - n_fdc
+            if n_filled > 0:
+                print(f"  Productattributes fallback: {n_filled:,} more cells")
+    elif nutrition_path.exists():
+        nutrition = pd.read_parquet(nutrition_path)
+        nut_join = (nutrition[["brand_code_uc"] + zeta_cols]
+                    .rename(columns={"brand_code_uc": "j"}))
+        panel = panel.merge(nut_join, on="j", how="left")
+        n_with_zeta = panel[zeta_cols[0]].notna().sum()
+        print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells")
+    else:
+        print("  WARNING: no nutrition data found; skipping zeta merge")
+        for c in zeta_cols:
+            panel[c] = np.nan
+
+    # Apply manual overrides as final fallback
+    overrides_path = cfg.get("nutrition_overrides", "config/nutrition_overrides.yaml")
+    if Path(overrides_path).exists():
+        with open(overrides_path) as f:
+            overrides = yaml.safe_load(f) or {}
+        n_applied = 0
+        for brand_descr, vals in overrides.items():
+            if not isinstance(vals, dict):
+                continue
+            mask = panel["brand_descr"] == brand_descr
+            if not mask.any():
+                continue
+            for col in zeta_cols:
+                if col in vals and panel.loc[mask, col].isna().any():
+                    panel.loc[mask & panel[col].isna(), col] = vals[col]
+            if mask.any():
+                n_applied += 1
+        if n_applied:
+            print(f"  Overrides applied: {n_applied} brands")
+
+    n_final = panel[zeta_cols[0]].notna().sum()
+    n_missing = len(panel) - n_final
+    if n_missing > 0:
+        missing_brands = panel.loc[panel[zeta_cols[0]].isna(), "brand_descr"].unique()
+        print(f"  Still missing {zeta_cols[0]}: {n_missing:,} cells "
+              f"({list(missing_brands)})")
+
+    return panel
+
+
+# ---------------------------------------------------------------------------
 # Quarter computation
 # ---------------------------------------------------------------------------
 
@@ -607,44 +686,7 @@ def aggregate_markets(cfg, years=None):
     fdc_path = Path("config/fdc_nutrition.csv")
     nutrition_path = clean_dir / "nutrition.parquet"
 
-    if fdc_path.exists():
-        fdc = pd.read_csv(fdc_path)[["brand_code_uc"] + zeta_cols]
-        fdc = fdc.rename(columns={"brand_code_uc": "j"})
-        panel = panel.merge(fdc, on="j", how="left")
-        n_fdc = panel[zeta_cols[0]].notna().sum()
-        print(f"  FDC nutrition: {n_fdc:,} / {len(panel):,} cells")
-
-        # Fill gaps from productattributes
-        if nutrition_path.exists():
-            pa_nut = pd.read_parquet(nutrition_path)
-            pa_join = (pa_nut[["brand_code_uc"] + zeta_cols]
-                       .rename(columns={"brand_code_uc": "j"}))
-            panel = panel.set_index("j" if "j" in panel.columns else [])
-            for col in zeta_cols:
-                pa_lookup = pa_join.set_index("j")[col]
-                mask = panel[col].isna()
-                if mask.any():
-                    panel.loc[mask, col] = (
-                        panel.loc[mask].index
-                        .get_level_values("j" if "j" in panel.index.names else 0)
-                        .map(pa_lookup)
-                    )
-            panel = panel.reset_index()
-            n_after = panel[zeta_cols[0]].notna().sum()
-            n_filled = n_after - n_fdc
-            if n_filled > 0:
-                print(f"  Productattributes fallback filled {n_filled:,} more cells")
-    elif nutrition_path.exists():
-        nutrition = pd.read_parquet(nutrition_path)
-        nut_join = (nutrition[["brand_code_uc"] + zeta_cols]
-                    .rename(columns={"brand_code_uc": "j"}))
-        panel = panel.merge(nut_join, on="j", how="left")
-        n_with_zeta = panel[zeta_cols[0]].notna().sum()
-        print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells")
-    else:
-        print("  WARNING: no nutrition data found; skipping zeta merge")
-        for c in zeta_cols:
-            panel[c] = np.nan
+    panel = _merge_nutrition(panel, zeta_cols, fdc_path, nutrition_path, cfg)
 
     # Z_agg: market-time aggregates Z_lt = sum_j S_jt * zeta_jl
     # These are share-weighted sums of characteristics per (t, m) cell.
