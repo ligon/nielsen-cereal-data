@@ -600,19 +600,49 @@ def aggregate_markets(cfg, years=None):
     # ------------------------------------------------------------------
     # Merge nutrition (zeta) and compute Z_agg
     # ------------------------------------------------------------------
+    # FDC (config/fdc_nutrition.csv) is the primary source: hand-verified,
+    # consistent serving sizes.  Fall back to nutrition.parquet (2021+
+    # productattributes) for brands not in FDC.
     zeta_cols = ["sugar", "fiber", "protein", "fat", "sodium"]
+    fdc_path = Path("config/fdc_nutrition.csv")
     nutrition_path = clean_dir / "nutrition.parquet"
-    if nutrition_path.exists():
+
+    if fdc_path.exists():
+        fdc = pd.read_csv(fdc_path)[["brand_code_uc"] + zeta_cols]
+        fdc = fdc.rename(columns={"brand_code_uc": "j"})
+        panel = panel.merge(fdc, on="j", how="left")
+        n_fdc = panel[zeta_cols[0]].notna().sum()
+        print(f"  FDC nutrition: {n_fdc:,} / {len(panel):,} cells")
+
+        # Fill gaps from productattributes
+        if nutrition_path.exists():
+            pa_nut = pd.read_parquet(nutrition_path)
+            pa_join = (pa_nut[["brand_code_uc"] + zeta_cols]
+                       .rename(columns={"brand_code_uc": "j"}))
+            panel = panel.set_index("j" if "j" in panel.columns else [])
+            for col in zeta_cols:
+                pa_lookup = pa_join.set_index("j")[col]
+                mask = panel[col].isna()
+                if mask.any():
+                    panel.loc[mask, col] = (
+                        panel.loc[mask].index
+                        .get_level_values("j" if "j" in panel.index.names else 0)
+                        .map(pa_lookup)
+                    )
+            panel = panel.reset_index()
+            n_after = panel[zeta_cols[0]].notna().sum()
+            n_filled = n_after - n_fdc
+            if n_filled > 0:
+                print(f"  Productattributes fallback filled {n_filled:,} more cells")
+    elif nutrition_path.exists():
         nutrition = pd.read_parquet(nutrition_path)
-        # nutrition is keyed by brand_code_uc; panel uses j
         nut_join = (nutrition[["brand_code_uc"] + zeta_cols]
                     .rename(columns={"brand_code_uc": "j"}))
         panel = panel.merge(nut_join, on="j", how="left")
         n_with_zeta = panel[zeta_cols[0]].notna().sum()
-        print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells "
-              f"have zeta")
+        print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells")
     else:
-        print("  WARNING: nutrition.parquet not found; skipping zeta merge")
+        print("  WARNING: no nutrition data found; skipping zeta merge")
         for c in zeta_cols:
             panel[c] = np.nan
 
@@ -631,10 +661,19 @@ def aggregate_markets(cfg, years=None):
     panel = panel.merge(z_agg, on=["t", "m"], how="left")
     print(f"  Z_agg computed: {z_agg_cols}")
 
+    # pyblp-compatible identifiers
+    panel["market_ids"] = panel["t"] + "_DMA_" + panel["m"].astype(str)
+    panel["product_ids"] = panel["j"].astype(str)
+
+    # Rename to match pyblp / K-Aggregators conventions
+    panel = panel.rename(columns={"S": "shares", "p": "prices"})
+
     # Select and order output columns
-    out_cols = ["t", "m", "j", "S", "p", "brand_descr"] + zeta_cols + z_agg_cols + [
-                "servings", "revenue", "n_transactions",
-                "market_size", "n_hh", "panel_year"]
+    out_cols = (["t", "m", "j", "market_ids", "product_ids",
+                 "shares", "prices", "brand_descr"]
+                + zeta_cols + z_agg_cols
+                + ["servings", "revenue", "n_transactions",
+                   "market_size", "n_hh", "panel_year"])
     panel = panel[out_cols].copy()
 
     # Set index
@@ -653,18 +692,18 @@ def aggregate_markets(cfg, years=None):
 
     # Summary stats
     print(f"\n  Share statistics:")
-    print(f"    mean:   {panel['S'].mean():.6f}")
-    print(f"    median: {panel['S'].median():.6f}")
-    print(f"    max:    {panel['S'].max():.6f}")
-    print(f"    min:    {panel['S'].min():.6f}")
+    print(f"    mean:   {panel['shares'].mean():.6f}")
+    print(f"    median: {panel['shares'].median():.6f}")
+    print(f"    max:    {panel['shares'].max():.6f}")
+    print(f"    min:    {panel['shares'].min():.6f}")
     print(f"  Price ($/oz) statistics:")
-    print(f"    mean:   {panel['p'].mean():.4f}")
-    print(f"    median: {panel['p'].median():.4f}")
-    print(f"    max:    {panel['p'].max():.4f}")
-    print(f"    min:    {panel['p'].min():.4f}")
+    print(f"    mean:   {panel['prices'].mean():.4f}")
+    print(f"    median: {panel['prices'].median():.4f}")
+    print(f"    max:    {panel['prices'].max():.4f}")
+    print(f"    min:    {panel['prices'].min():.4f}")
 
     # Inside-good share sum distribution
-    inside = panel.groupby(level=["t", "m"])["S"].sum()
+    inside = panel.groupby(level=["t", "m"])["shares"].sum()
     print(f"  Inside-good share sum:")
     print(f"    mean:   {inside.mean():.4f}")
     print(f"    median: {inside.median():.4f}")

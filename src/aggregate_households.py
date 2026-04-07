@@ -242,11 +242,33 @@ def aggregate_households(cfg, years=None):
     })
 
     # ------------------------------------------------------------------
-    # Merge nutrition (zeta)
+    # Merge nutrition (zeta) — FDC primary, productattributes fallback
     # ------------------------------------------------------------------
     zeta_cols = ["sugar", "fiber", "protein", "fat", "sodium"]
+    fdc_path = Path("config/fdc_nutrition.csv")
     nutrition_path = clean_dir / "nutrition.parquet"
-    if nutrition_path.exists():
+
+    if fdc_path.exists():
+        fdc = pd.read_csv(fdc_path)[["brand_code_uc"] + zeta_cols]
+        fdc = fdc.rename(columns={"brand_code_uc": "j"})
+        panel = panel.merge(fdc, on="j", how="left")
+        n_fdc = panel[zeta_cols[0]].notna().sum()
+        print(f"  FDC nutrition: {n_fdc:,} / {len(panel):,} cells")
+        # Fill gaps from productattributes
+        if nutrition_path.exists():
+            pa_nut = pd.read_parquet(nutrition_path)
+            pa_lookup = (pa_nut.set_index("brand_code_uc")[zeta_cols]
+                         .rename_axis("j"))
+            for col in zeta_cols:
+                mask = panel[col].isna()
+                if mask.any():
+                    panel.loc[mask, col] = (
+                        panel.loc[mask, "j"].map(pa_lookup[col])
+                    )
+            n_filled = panel[zeta_cols[0]].notna().sum() - n_fdc
+            if n_filled > 0:
+                print(f"  Productattributes fallback: {n_filled:,} more cells")
+    elif nutrition_path.exists():
         nutrition = pd.read_parquet(nutrition_path)
         nut_join = (nutrition[["brand_code_uc"] + zeta_cols]
                     .rename(columns={"brand_code_uc": "j"}))
@@ -254,7 +276,7 @@ def aggregate_households(cfg, years=None):
         n_with_zeta = panel[zeta_cols[0]].notna().sum()
         print(f"  Nutrition merged: {n_with_zeta:,} / {len(panel):,} cells")
     else:
-        print("  WARNING: nutrition.parquet not found; skipping zeta merge")
+        print("  WARNING: no nutrition data found")
         for c in zeta_cols:
             panel[c] = np.nan
 
