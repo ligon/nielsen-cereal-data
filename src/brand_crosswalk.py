@@ -47,7 +47,9 @@ def build_crosswalk(raw_dir, modules):
               .rename(columns={"brand_descr": "brand_descr_legacy"}))
 
     # Find a 2021+ purchase file for the new-era brand names
-    new_files = sorted(raw.glob("purchases_202*.parquet"))
+    # Must be >= 2021 (2020 is still legacy format)
+    new_files = sorted(f for f in raw.glob("purchases_202*.parquet")
+                       if int(f.stem.split("_")[1]) >= 2021)
     if not new_files:
         print("WARNING: No 2021+ purchase files found; crosswalk will be empty")
         return pd.DataFrame(columns=["brand_code_uc", "brand_descr_legacy",
