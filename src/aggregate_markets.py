@@ -373,9 +373,21 @@ def _select_top_brands(purchases, n_products, clean_dir):
     if sel_path.exists():
         top = pd.read_parquet(sel_path)
         if "brand_code_uc" in top.columns:
-            brand_codes = top["brand_code_uc"].dropna().unique()
-            print(f"  Using saved brand selection: {len(brand_codes)} brands")
-            return brand_codes
+            cached = top["brand_code_uc"].dropna().unique().tolist()
+            # Guard: the cache (built by select_products.py) is NOT CTL-filtered
+            # and may predate the current window.  `purchases` here is already
+            # CTL-dropped, so intersect with the codes actually present -- a
+            # stale/contaminated cache can then never reintroduce CTL or pick a
+            # brand absent from this run.  Fall through to a fresh ranking if the
+            # filtered cache is short of n_products.
+            present = set(purchases["brand_code_uc"].dropna().unique())
+            cached = [c for c in cached if c in present]
+            if len(cached) >= n_products:
+                print(f"  Using saved brand selection: {len(cached)} valid "
+                      f"brands (CTL-guarded)")
+                return np.array(cached[:n_products])
+            print(f"  Saved selection has only {len(cached)} valid brands "
+                  f"(<{n_products}); recomputing from CTL-dropped purchases")
 
     # Compute from purchases (only rows with valid brand_code_uc)
     valid = purchases.dropna(subset=["brand_code_uc"])
