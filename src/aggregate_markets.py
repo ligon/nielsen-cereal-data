@@ -523,9 +523,18 @@ def aggregate_markets(cfg, years=None):
     print(f"  Trips matching cereal purchases: {len(trips_needed):,} "
           f"of {len(trips):,}")
 
+    # Merge on (trip_code_uc, panel_year), NOT trip_code_uc alone.  The 2021+
+    # HMS extracts re-use trip_code_uc as a PER-YEAR-SEQUENTIAL id (the same
+    # integer is a different trip each HMS year: trips_2021 & trips_2022 share
+    # 9.7M codes with 0% same-household), so a key of trip_code_uc alone fans
+    # every HMS purchase out across all HMS years sharing the code (~3-4x
+    # inflation of servings/transactions, surviving the panelist merge).  Adding
+    # panel_year restricts each purchase to its own year's trip.  Legacy
+    # (2004-2020) codes are globally unique -> this is a no-op there.  Same
+    # incomplete-merge-key class as gotcha #18.
     merged = purchases.merge(
-        trips_needed[["trip_code_uc", "household_code", "purchase_date"]],
-        on="trip_code_uc",
+        trips_needed[["trip_code_uc", "panel_year", "household_code", "purchase_date"]],
+        on=["trip_code_uc", "panel_year"],
         how="inner"
     )
     n_unmatched = len(purchases) - len(merged)
