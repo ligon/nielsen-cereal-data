@@ -111,9 +111,14 @@ def aggregate_households(cfg, years=None):
     print(f"  Trips matching cereal purchases: {len(trips_needed):,} "
           f"of {len(trips):,}")
 
+    # Merge on (trip_code_uc, panel_year), NOT trip_code_uc alone -- the 2021+
+    # HMS extracts re-use trip_code_uc as a per-year-sequential id (same int =
+    # different trip each HMS year), so a trip_code_uc-only key fans every HMS
+    # purchase out across all HMS years sharing the code (~3-4x).  Identical bug
+    # + fix as aggregate_markets.py (see that file's note); gotcha-#18 class.
     merged = purchases.merge(
-        trips_needed[["trip_code_uc", "household_code", "purchase_date"]],
-        on="trip_code_uc", how="inner"
+        trips_needed[["trip_code_uc", "panel_year", "household_code", "purchase_date"]],
+        on=["trip_code_uc", "panel_year"], how="inner"
     )
     n_unmatched = len(purchases) - len(merged)
     if n_unmatched > 0:
