@@ -314,8 +314,11 @@ def _merge_nutrition(panel, zeta_cols, fdc_path, nutrition_path, cfg):
             panel[c] = np.nan
 
     # Apply manual overrides as final fallback
+    # Overrides are keyed by brand_descr (brand NAME) and so apply only to the
+    # market panel; the household panel is keyed by brand_code (no brand_descr),
+    # where code-keyed FDC + productattributes already cover the kept brands.
     overrides_path = cfg.get("nutrition_overrides", "config/nutrition_overrides.yaml")
-    if Path(overrides_path).exists():
+    if "brand_descr" in panel.columns and Path(overrides_path).exists():
         with open(overrides_path) as f:
             overrides = yaml.safe_load(f) or {}
         n_applied = 0
@@ -336,7 +339,8 @@ def _merge_nutrition(panel, zeta_cols, fdc_path, nutrition_path, cfg):
     n_final = panel[zeta_cols[0]].notna().sum()
     n_missing = len(panel) - n_final
     if n_missing > 0:
-        missing_brands = panel.loc[panel[zeta_cols[0]].isna(), "brand_descr"].unique()
+        _idcol = "brand_descr" if "brand_descr" in panel.columns else "j"
+        missing_brands = panel.loc[panel[zeta_cols[0]].isna(), _idcol].unique()
         print(f"  Still missing {zeta_cols[0]}: {n_missing:,} cells "
               f"({list(missing_brands)})")
 
