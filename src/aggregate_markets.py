@@ -105,12 +105,15 @@ def _read_one_panelist(raw_dir, year, fips_to_dma):
         out["DMA_Cd"] = df["DMA_Cd"]
         out["DMA_Name"] = df["DMA_Name"]
         out["projection_factor"] = df["Projection_Factor"]
+        out["household_size"] = df["Household_Size"]
         return out
     else:
         out = pd.DataFrame()
         out["household_code"] = df["household_code"]
         out["panel_year"] = df["panel_year"]
         out["projection_factor"] = df["projection_factor"]
+        out["household_size"] = (df["household_size"] if "household_size" in df.columns
+                                 else df["Household_Size"])
 
         if fips_to_dma is not None:
             fips = df[["fips_state_code", "fips_county_code"]].copy()
@@ -411,17 +414,23 @@ def _compute_market_size(panelists, top_dmas, oz_per_day, frequency):
     else:
         raise ValueError(f"Unknown frequency: {frequency}")
 
-    # Count households per (panel_year, DMA)
-    hh_counts = (
+    # Persons per (panel_year, DMA): sum household_size over UNIQUE households.
+    # Intent is per-PERSON capacity x population (Nevo 2001), NOT households --
+    # using a household count understated the market ~2.5x.
+    _uniq = (
         panelists[panelists["DMA_Cd"].isin(top_dmas)]
-        .groupby(["panel_year", "DMA_Cd"])["household_code"]
-        .nunique()
+        .dropna(subset=["household_size"])
+        .drop_duplicates(subset=["panel_year", "DMA_Cd", "household_code"])
+    )
+    hh_counts = (
+        _uniq.groupby(["panel_year", "DMA_Cd"])
+        .agg(n_hh=("household_code", "nunique"),
+             n_persons=("household_size", "sum"))
         .reset_index()
-        .rename(columns={"household_code": "n_hh"})
     )
 
     hh_counts["market_size"] = (
-        hh_counts["n_hh"] * days * oz_per_day * 1.05
+        hh_counts["n_persons"] * days * oz_per_day * 1.05
     )
 
     return hh_counts
@@ -543,6 +552,15 @@ def aggregate_markets(cfg, years=None):
     # Add quarter label
     merged = _add_quarter(merged)
 
+    # Drop private label / store brands (CTL*) BEFORE selection + aggregation,
+    # matching the original (Fally) analysis so the top-N are real brands and
+    # both models share an identical, CTL-free product set.
+    _ctl = merged["brand_descr"].astype(str).str.upper().str.startswith("CTL")
+    _n_ctl = int(_ctl.sum())
+    if _n_ctl:
+        merged = merged[~_ctl]
+        print(f"  Dropped {_n_ctl:,} private-label (CTL*) rows before selection")
+
     # ------------------------------------------------------------------
     # Step 5: Select top products and top DMAs
     # ------------------------------------------------------------------
@@ -594,20 +612,6 @@ def aggregate_markets(cfg, years=None):
         .reset_index()
     )
 
-    # Dominant panel_year per cell: the year contributing the most
-    # revenue.  Handles the rare quarter-boundary case where a cell
-    # spans two panel_years; picks the one with more spending.
-    dominant_year = (
-        merged
-        .groupby(grp_cols + ["panel_year"])["total_price_paid"]
-        .sum()
-        .reset_index()
-        .sort_values("total_price_paid", ascending=False)
-        .drop_duplicates(subset=grp_cols)
-        [grp_cols + ["panel_year"]]
-    )
-    agg = agg.merge(dominant_year, on=grp_cols, how="left")
-
     # Price = revenue / servings (per oz)
     agg["p"] = agg["revenue"] / agg["servings"]
 
@@ -631,8 +635,13 @@ def aggregate_markets(cfg, years=None):
     # Market size per (panel_year, DMA)
     mkt_size = _compute_market_size(panelists, top_dmas, oz_per_day, frequency)
 
+    # Key market_size on the CALENDAR year parsed from the quarter label t, so
+    # EVERY brand in a (t, DMA) cell gets the SAME market_size.  (Fixes the prior
+    # per-(t,m,j) dominant-panel_year merge -> market_size varied by brand within
+    # a cell; same s=(t,m) discipline class as K-Aggregators gotcha #17/#18.)
+    agg["panel_year"] = agg["t"].str.extract(r"Y(\d{4})")[0].astype(int)
     agg = agg.merge(
-        mkt_size[["panel_year", "DMA_Cd", "market_size", "n_hh"]],
+        mkt_size[["panel_year", "DMA_Cd", "market_size", "n_hh", "n_persons"]],
         on=["panel_year", "DMA_Cd"],
         how="left"
     )
@@ -646,7 +655,13 @@ def aggregate_markets(cfg, years=None):
         agg = agg.dropna(subset=["market_size"])
 
     # Shares
+    # S = QUANTITY inside-good share (servings / market_size) -- for BLP.
     agg["S"] = agg["servings"] / agg["market_size"]
+    # W_exp = EXPENDITURE share (revenue_j / sum_k revenue_k) -- the K-aggregator
+    # model's dependent object.  Sums to 1 over inside goods within (t, DMA).
+    agg["W_exp"] = (
+        agg["revenue"] / agg.groupby(["t", "DMA_Cd"])["revenue"].transform("sum")
+    )
 
     # Validate shares
     share_sum = agg.groupby(["t", "DMA_Cd"])["S"].sum()
@@ -722,8 +737,9 @@ def aggregate_markets(cfg, years=None):
                  "dma_cd", "quarter",
                  "shares", "prices", "brand_descr"]
                 + zeta_cols + z_agg_cols
+                + ["W_exp"]
                 + ["servings", "revenue", "n_transactions",
-                   "market_size", "n_hh", "panel_year"])
+                   "market_size", "n_hh", "n_persons", "panel_year"])
     panel = panel[out_cols].copy()
 
     # Set index
