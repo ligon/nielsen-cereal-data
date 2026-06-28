@@ -279,7 +279,12 @@ def aggregate_households(cfg, years=None):
         demog = pd.read_parquet(demog_path)
         # demog is indexed by (i, t); reset for merge
         demog = demog.reset_index()
-        demog_cols = [c for c in demog.columns if c not in ["i", "t", "m"]]
+        # Keep ONLY the demographic variables; exclude index/metadata columns
+        # (panel_year, m, market_ids, projection_factor) which would collide with
+        # the panel's existing columns on the (i,t) merge -> _x/_y suffixes ->
+        # KeyError downstream.
+        _demog_meta = {"i", "t", "m", "panel_year", "market_ids", "projection_factor"}
+        demog_cols = [c for c in demog.columns if c not in _demog_meta]
         panel = panel.merge(demog[["i", "t"] + demog_cols],
                             on=["i", "t"], how="left")
         n_with_demog = panel[demog_cols[0]].notna().sum()
