@@ -211,8 +211,11 @@ def aggregate_households(cfg, years=None):
 
     mkt_size = _compute_market_size(panelists, top_dmas, oz_per_day, frequency)
 
-    # Household share = household servings / (market_size / n_hh)
-    # i.e., each household's share of their per-household market potential
+    # Household share = household servings / TOTAL market size -- the same
+    # denominator the market panel uses, so household shares are bounded [0,1]
+    # and directly comparable to market shares.  (The earlier
+    # servings/(market_size/n_hh) per-household normalization produced S>1, max
+    # 7.5; recoverable as S*n_hh if a per-household consumption index is wanted.)
     agg = agg.merge(
         mkt_size[["panel_year", "DMA_Cd", "market_size", "n_hh"]],
         on=["panel_year", "DMA_Cd"], how="left"
@@ -223,9 +226,16 @@ def aggregate_households(cfg, years=None):
         print(f"  Dropping {n_no_mkt:,} cells with no market size")
         agg = agg.dropna(subset=["market_size"])
 
-    # Per-household market size = total market size / n_households
-    agg["hh_market_size"] = agg["market_size"] / agg["n_hh"]
-    agg["S"] = agg["servings"] / agg["hh_market_size"]
+    agg["S"] = agg["servings"] / agg["market_size"]
+
+    # S_exp: household EXPENDITURE budget share across brands -- the K-aggregator
+    # dependent object (paper notation S; we are deprecating W in favor of S --
+    # see ledger).  Sums to 1 over j within (household, quarter).  `S` above is
+    # the QUANTITY share (servings/market_size) for the BLP-style micro model.
+    agg["S_exp"] = (
+        agg["revenue"]
+        / agg.groupby(["household_code", "t"])["revenue"].transform("sum")
+    )
 
     # Validate
     hh_quarter_share = agg.groupby(["household_code", "t"])["S"].sum()
@@ -293,7 +303,7 @@ def aggregate_households(cfg, years=None):
         print("  WARNING: demographics_household.parquet not found")
         demog_cols = []
 
-    out_cols = (["i", "t", "j", "S", "p", "m"]
+    out_cols = (["i", "t", "j", "S", "S_exp", "p", "m"]
                 + zeta_cols + z_cols + demog_cols
                 + ["servings", "revenue", "n_transactions", "panel_year"])
     panel = panel[out_cols].set_index(["i", "t", "j"]).sort_index()
