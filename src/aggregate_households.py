@@ -268,9 +268,11 @@ def aggregate_households(cfg, years=None):
         cfg,
     )
 
-    # Z_i: household-level aggregates Z_il = sum_j S_ij * zeta_jl
+    # Z_i: household-level aggregates Z_il = sum_j zeta_jl * S_exp_ij, weighted by
+    # the EXPENDITURE share S_exp (NOT the quantity share S).  Matches the paper
+    # empirics.tex:92, Z_lt = sum_i zeta_il S_it with S the expenditure share.
     for col in zeta_cols:
-        panel[f"Z_{col}"] = panel["S"] * panel[col]
+        panel[f"Z_{col}"] = panel["S_exp"] * panel[col]
     z_cols = [f"Z_{c}" for c in zeta_cols]
     z_hh = (
         panel.groupby(["i", "t"])[z_cols]
