@@ -336,6 +336,14 @@ def _merge_nutrition(panel, zeta_cols, fdc_path, nutrition_path, cfg):
         if n_applied:
             print(f"  Overrides applied: {n_applied} brands")
 
+    # Sodium is reported in MILLIGRAMS by every source (FDC hand-verified,
+    # NielsenIQ productattributes via nutrition.NUTRITION_COLS['SODIUM'], and the
+    # overrides).  Normalize it to GRAMS so all five characteristics share
+    # per-serving-gram units (config nutrient_unit: gram_per_serving); raw sodium
+    # (~150 mg) is otherwise two orders of magnitude off the others (~1-8 g).
+    if "sodium" in panel.columns:
+        panel["sodium"] = panel["sodium"] / 1000.0
+
     n_final = panel[zeta_cols[0]].notna().sum()
     n_missing = len(panel) - n_final
     if n_missing > 0:

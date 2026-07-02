@@ -201,6 +201,8 @@ NUTRITION_COLS = {
     "DIETARY_FIBER":  ("fiber",   "GRAM"),
     "PROTEIN_GRAM":   ("protein", "GRAM"),
     "TOTAL_FAT_GRAM": ("fat",     "GRAM"),
+    # Parsed in the source unit (mg); aggregate_markets normalizes sodium to
+    # grams so all five characteristics share per-serving-gram units.
     "SODIUM":         ("sodium",  "MILLIGRAM"),
 }
 
