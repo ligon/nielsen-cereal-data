@@ -97,6 +97,73 @@ def _load_panelists_demog(raw_dir, years, demog_cols, fips_to_dma):
     return pd.concat(dfs, ignore_index=True)
 
 
+# Column-name prefix for the cumulative bracket-share encoding.  The raw
+# NielsenIQ ordinal CODES are themselves the brackets (no codebook needed),
+# so the cumulative share at threshold v is the share of households with
+# code >= v.  Any demographic not listed here falls back to a sanitized
+# prefix derived from its name.
+_THRESH_PREFIX = {
+    "household_income": "inc",
+    "male_head_age": "age",
+}
+
+
+def _thresh_prefix(col):
+    return _THRESH_PREFIX.get(col, "".join(c for c in col if c.isalnum())[:6])
+
+
+def compute_threshold_shares(panelists_qt, demog_cols):
+    """Market-level CUMULATIVE BRACKET SHARES from the raw ordinal codes.
+
+    For each demographic ``col`` and each threshold ``v`` in its sorted unique
+    codes (the trivial lowest threshold, whose share is always 1, is dropped),
+    the column ``{prefix}_ge_{v}`` is the projection_factor-weighted share of
+    households in each market ``(t, m)`` whose code is ``>= v``.  The
+    denominator is the projection-factor mass of households with a non-missing
+    code for that demographic (so missing codes are excluded, matching the
+    weighted-mean convention).
+
+    Returns ``(shares_df, info)`` where ``shares_df`` is indexed ``(t, m)`` and
+    ``info`` is a list of ``(col, prefix, [thresholds])`` tuples.
+    """
+    keys = ["t", "m"]
+    info = []
+    blocks = []
+    pf_all = panelists_qt["projection_factor"].to_numpy(float)
+    base = pd.DataFrame({
+        "t": panelists_qt["t"].to_numpy(),
+        "m": panelists_qt["DMA_Cd"].to_numpy(),
+    })
+    for col in demog_cols:
+        if col not in panelists_qt.columns:
+            continue
+        prefix = _thresh_prefix(col)
+        vals = panelists_qt[col].to_numpy()
+        notna = ~pd.isna(vals)
+        codes = np.sort(np.unique(vals[notna]))
+        if codes.size < 2:
+            continue
+        thresholds = codes[1:]  # drop the trivial lowest (share == 1)
+        bdf = base.copy()
+        # Indicator * projection_factor for each threshold (0 where code is
+        # missing); denominator = projection_factor where code is present.
+        for v in thresholds:
+            ind = np.where(notna & (vals >= v), pf_all, 0.0)
+            bdf[f"{prefix}_ge_{int(v)}"] = ind
+        denom_name = f"_denom_{prefix}"
+        bdf[denom_name] = np.where(notna, pf_all, 0.0)
+        g = bdf.groupby(keys).sum()
+        denom = g.pop(denom_name)
+        shares = g.div(denom, axis=0)
+        blocks.append(shares)
+        info.append((col, prefix, [int(v) for v in thresholds]))
+    if not blocks:
+        return pd.DataFrame(index=pd.MultiIndex.from_arrays(
+            [[], []], names=keys)), info
+    out = pd.concat(blocks, axis=1).sort_index()
+    return out, info
+
+
 def _quarter_from_panel_year(panel_year, frequency):
     """Generate quarter labels for a panel year.
 
@@ -117,7 +184,7 @@ def _quarter_from_panel_year(panel_year, frequency):
         raise ValueError(f"Unknown frequency: {frequency}")
 
 
-def compute_demographics(cfg, years=None):
+def compute_demographics(cfg, years=None, market_only=False):
     """Compute market-level and household-level demographics.
 
     Parameters
@@ -126,11 +193,16 @@ def compute_demographics(cfg, years=None):
         Pipeline configuration.
     years : list of int, optional
         Override year range.
+    market_only : bool, default False
+        When True, skip the household-level computation and write, rebuilding
+        ONLY demographics_market.parquet (leaves demographics_household.parquet
+        untouched).
 
     Returns
     -------
-    (pd.DataFrame, pd.DataFrame)
-        demographics_market (t, m) and demographics_household (i, t).
+    (pd.DataFrame, pd.DataFrame or None)
+        demographics_market (t, m) and demographics_household (i, t) (None when
+        ``market_only``).
     """
     raw_dir = Path("data/raw")
     clean_dir = Path("data/clean")
@@ -226,8 +298,30 @@ def compute_demographics(cfg, years=None):
               f"std={s.std():.1f}")
 
     # ------------------------------------------------------------------
+    # Cumulative bracket shares (for FWL nuisance controls).  These keep
+    # the existing mean columns and ADD one column per (demographic,
+    # threshold).  Index is (t, m), aligned with demog_market.
+    # ------------------------------------------------------------------
+    print("\n[3b/4] Computing market-level cumulative bracket shares...")
+    thresh_market, thresh_info = compute_threshold_shares(
+        panelists_qt, available_demog)
+    n_thresh = thresh_market.shape[1]
+    demog_market = demog_market.join(thresh_market, how="left")
+    print(f"  Threshold-share columns produced: {n_thresh}")
+    for col, prefix, thr in thresh_info:
+        print(f"    {col}: {len(thr)} thresholds "
+              f"({prefix}_ge_{thr[0]} .. {prefix}_ge_{thr[-1]})")
+
+    # ------------------------------------------------------------------
     # Household-level demographics: per (i, t)
     # ------------------------------------------------------------------
+    if market_only:
+        out_market = clean_dir / "demographics_market.parquet"
+        demog_market.to_parquet(out_market)
+        print(f"\nSaved market demographics to {out_market}")
+        print("market_only=True: skipped household-level computation/write.")
+        return demog_market, None
+
     print("\n[4/4] Computing household-level demographics...")
 
     demog_hh = (
@@ -265,6 +359,9 @@ def main():
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--years", nargs=2, type=int, default=None,
                         help="Override year range (e.g., --years 2014 2018)")
+    parser.add_argument("--market-only", action="store_true",
+                        help="Rebuild ONLY demographics_market.parquet "
+                             "(skip household-level computation/write).")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -273,7 +370,7 @@ def main():
     else:
         years = None
 
-    compute_demographics(cfg, years=years)
+    compute_demographics(cfg, years=years, market_only=args.market_only)
 
 
 if __name__ == "__main__":
