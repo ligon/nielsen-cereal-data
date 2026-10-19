@@ -157,3 +157,21 @@ shape; the two logs changed only in their =#+date= line), then
   COCOA PEBBLES ($237).  They exist because the panel's name route loses
   these brands (e.g. Trix -> 747763) while a few RMS UPCs bypass it.  For
   D4(c); kept, not silently dropped.
+
+* D6 --- homog on RMS (stretch): DONE (validate agent)
+- Driver: CerealDemand =src/rms_homog_compare.py= (branch =rms=, 4721a07),
+  run on this node with =JAX_PLATFORMS=cpu=; =build_one(Spec("homog",
+  source="rms"))=, estimate_homog defaults (two-step clustered GMM,
+  n_boot_J=2000).  ~4 min per law.
+- Laws (group-only, NOT in the shared var/laws):
+  =Data/NielsenScanner/rms/laws/{homog.rms,homog.win2006-2024.baseQ1Y2006}.law=
+  and =homog_compare.json=; logs =rms/logs/d6_homog_{rms,panelwindow}.log=.
+  The panel =homog= law is read read-only from the shared mirror's
+  =var/laws=; the read path reproduces theta 1.2297 / J 2595.9.
+- Result (=docs/rms-validation.org= section 9):
+  | law                            | years     | N       | theta  | SE     | J_cluster |
+  | homog (panel, declared)        | 2004-2024 | 236,088 | 1.2297 | 0.0559 |    2595.9 |
+  | homog.rms                      | 2006-2024 | 218,986 | 2.2568 | 0.0576 |    6689.2 |
+  | panel on the RMS window/base   | 2006-2024 | 214,637 | 1.2222 | 0.0669 |    2595.2 |
+  All on 16 dof, wild p = 0.0005 (the 1/2001 floor).  The window moves
+  theta by -0.008; the source moves it by +1.03.  Not interpreted here.
