@@ -1,7 +1,7 @@
 CONFIG ?= config/default.yaml
 PYTHON ?= .venv/bin/python
 
-.PHONY: all extract crosswalk nutrition markets households demographics help clean-data
+.PHONY: all extract crosswalk nutrition markets households demographics help clean-data rms rms-test
 
 help:
 	@echo "nielsen-cereal-data pipeline"
@@ -14,6 +14,8 @@ help:
 	@echo "  make households   Stage 5: Aggregate to household-level panel"
 	@echo "  make demographics Stage 6: Compute demographic aggregates"
 	@echo "  make all          Run full pipeline"
+	@echo "  make rms          RMS second source: per-year parquet (D2) + market_panel_rms (D3)"
+	@echo "  make rms-test     D3 contract test for market_panel_rms.parquet"
 	@echo ""
 	@echo "Override config:   make all CONFIG=config/custom.yaml"
 	@echo "Override years:    make extract YEARS='2014 2018'"
@@ -54,3 +56,16 @@ all: extract crosswalk nutrition markets households demographics
 
 clean-data:
 	rm -rf data/raw/ data/clean/
+
+# --- RMS (retail scanner) second source; see src/rms_build.sh -------------
+# Independent of the Homescan targets above; writes only under
+# Data/NielsenScanner/rms (group-only) and docs/rms-d{2,3}-log.org.
+# RMS_PYTHON defaults to the CerealDemand venv (pandas 3.0.3) so the D3 parquet
+# and its test share one pandas.
+RMS_PYTHON ?= /global/scratch/fsa/fc_jevons/ligon/mirrors/CerealDemand/.venv/bin/python
+
+rms:
+	PYTHON=$(RMS_PYTHON) src/rms_build.sh all
+
+rms-test:
+	$(RMS_PYTHON) -m pytest -q -p no:cacheprovider tests/test_rms_market_panel.py

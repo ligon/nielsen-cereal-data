@@ -1,0 +1,56 @@
+#+title: RMS second source --- data-stage progress (D2, D3)
+#+date: 2026-10-19
+
+Charter: CerealDemand =.sucoder/charter-rms.md= (branch =rms=), Amendment 1
+(EL 2026-10-19 05:53 PDT: option 1 for B1).  This file is the data agent's
+progress record; the validate agent copies it into CerealDemand's
+=.sucoder/handoff.org= progress section.  Branch =rms= of nielsen-cereal-data;
+push after every commit (=git push origin rms=), never main.
+
+* One command
+=make rms= (= =src/rms_build.sh all=, PYTHON = CerealDemand venv) regenerates
+D2 and D3 end to end; =make rms-test= runs the D3 test.  Stages:
+1. =src/rms_extract_classic.sh= (classic monoliths -> raw TSV; idempotent via
+   =<yr>.done=; already complete, 15/15, not re-run)
+2. =src/rms_convert.py master= (classic product master, module 1344, all versions)
+3. =src/rms_convert.py year <yr>= x 19 (JOBS=8 parallel; idempotent via =stats.json=)
+4. =src/rms_convert.py log= -> =docs/rms-d2-log.org=
+5. =src/rms_market_panel.py= -> =market_panel_rms.parquet=, diagnostics,
+   =docs/rms-d3-log.org=
+
+* D2 --- per-year parquet: DONE
+- Outputs: =/global/scratch/fsa/fc_jevons/ligon/Data/NielsenScanner/rms/<yr>/=
+  (=movement_1344.parquet=, =stores.parquet=, classic: =rms_versions.parquet=,
+  =products_extra_1344.parquet=; 2021+: =productdesc_1344.parquet=,
+  =productattributes_1344.parquet=; =stats.json=) and
+  =rms/master_products_1344.parquet=.  13 GB total.  Files 0640, dirs 2750.
+- Log: =docs/rms-d2-log.org= (rows, stores, UPCs, dollars, weeks per year).
+  2006-2024: 2.71 bn rows, $62.4 bn.  Wall time 8 min (JOBS=8).
+- Decisions:
+  - 2021+ movement is STREAMED from =<yr>_cereal.tgz= (=pigz -dc | tar -xOf -=)
+    straight into parquet, filtered to module 1344; no raw 2021+ TSVs are
+    written to =extracted/= (saves ~52 GB).  Same for the annual tables.
+  - 2021+ module filter: =productdesc.product_module_code= read as string,
+    =strip() == "1344"= (AUDIT-2022.org trap); 18.6k-20.1k UPCs per year;
+    module 1344 = 61-63% of the CEREAL AND GRANOLA category dollars.
+  - Product tables are restricted to module-1344 UPCs (classic: master-1344
+    UPCs; 2021+: productdesc-1344 UPCs); stores and rms_versions are full.
+  - =2020_stores_file_with_acv.tsv= not converted (acv is a non-goal).
+  - Movement dtypes: store int32, upc int64, week_end date32 (classic
+    yyyymmdd and 2021+ ISO both parsed), units/prmult int32, price float64,
+    feature/display int8 (null where blank: classic 3-18% non-null).
+  - Dollars = units x price / prmult; rows with prmult <= 0 or price <= 0 are
+    kept in the parquet but excluded from dollars and from D3 (only 60 rows,
+    2024, price <= 0).
+  - rms_versions: upc is unique within every classic year (0 duplicates).
+  - The classic master =Latest/products.tsv= equals the Homescan master the
+    panel uses (19,556 module-1344 (upc, upc_ver_uc) rows; brand and size
+    agree 100%).  Note: =extracted/Master_Files_2006-2020/Latest/{products,
+    brand_variations}.tsv= were re-extracted once from the same archive by
+    mistake at 06:02 (byte-identical size and mtime; content unchanged).
+  - kiltsreader not used (not installed); direct pyarrow read.
+- Weeks: every file's weeks are disjoint (2021 runs 2021-01-02..2022-01-01,
+  2022 starts 2022-01-08), so no week is double-counted; D3 still enforces
+  one-file-per-week (=week_sources.parquet=).
+
+* D3 --- market_panel_rms.parquet: IN PROGRESS
