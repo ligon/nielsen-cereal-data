@@ -133,3 +133,47 @@ theta depends on the source and on market size, and that a pooled theta
 hides heterogeneity across markets.  Which price concept the paper's theta
 should rest on, and whether theta should be allowed to vary by market
 size, are EL's calls.
+
+* het on the two sources (GPU, 2026-10-19)
+
+The reference =het= (lf_bartik_hausman instruments, demog both, ridge
+0.01) on the same samples, from CerealDemand =src/rms_het.py= (c2680a2):
+nine single-A40 jobs (Slurm 40149265-40149274; 2-7 minutes each).  het's
+headline is the distribution of theta_i over the 45 products, in original
+units (theta_i = exp(c_0 + c . zeta_tilde_j) / sigma_logp).  Laws and
+=het_summary_<name>.json= files sit beside the homog ones (=rms/laws=,
+=rms/theta_gap/<exp>/laws=).
+
+Route check: P0 (the panel's 2006-2024 cells through the rms reader)
+reproduces the panel comparator exactly (median theta_i 4.2380, J 2206.1).
+
+| exp | sample | N | (t, m) | median theta_i | min | max | sigma_logp | J_cluster | dof | converged |
+|-|-|-|-|-|-|-|-|-|-|-|
+| het.rms | RMS, all cells | 218,986 | 4,940 | 14.2586 | 10.2163 | 17.6794 | 0.1011 | 3792.6 | 23 | True |
+| het.win | panel 2006-2024, base Q1Y2006 | 214,637 | 4,940 | 4.2380 | 3.0319 | 7.7951 | 0.1279 | 2206.1 | 23 | True |
+| P0 | panel cells via the rms route (check) | 214,637 | 4,940 | 4.2380 | 3.0319 | 7.7951 | 0.1279 | 2206.1 | 23 | True |
+| R8 | RMS, DMA tertile 1 (small) | 74,074 | 1,672 | 15.5718 | 10.2197 | 20.8273 | 0.1033 | 1524.2 | 23 | True |
+| P8 | panel, DMA tertile 1 (small) | 71,248 | 1,672 | 120.6984 | 118.7102 | 122.6048 | 0.1450 | 1236.9 | 23 | *False* |
+| R9 | RMS, DMA tertile 2 | 70,714 | 1,596 | 9.4967 | 6.9591 | 12.6045 | 0.1058 | 743.4 | 23 | True |
+| P9 | panel, DMA tertile 2 | 69,602 | 1,596 | 3.9341 | 2.8211 | 5.2707 | 0.1290 | 586.3 | 23 | True |
+| R10 | RMS, DMA tertile 3 (large) | 74,198 | 1,672 | 19.1342 | 16.4138 | 22.5030 | 0.0932 | 1077.7 | 23 | True |
+| P10 | panel, DMA tertile 3 (large) | 73,787 | 1,672 | 6.8290 | 1.5525 | 13.0577 | 0.1067 | 1881.6 | 23 | True |
+
+What it shows:
+- The source gap is larger under het than under homog.  The median theta_i
+  is 14.3 on RMS against 4.2 on the panel (3.4x in original units; 2.7x
+  in standardized units, 1.44 vs 0.54).  homog's ratio was 1.85.
+- RMS stays above the panel in every tertile where both converged (9.5 vs
+  3.9 in tertile 2; 19.1 vs 6.8 in tertile 3).
+- P8 (panel, smallest DMAs) did not converge: its theta_i are bunched near
+  120, the theta -> infinity corner the het spec comments warn of
+  (CerealDemand =src/specs.py=).  It is not an estimate.
+- A theta_i of 10-20 implies own-price responses far larger than the
+  panel's.  Whether RMS het sits near the same corner without the
+  optimizer reporting it is not established; the J statistics reject
+  everywhere (cluster-wild p = 0.002, the floor for these draws).
+- Note that het's demographics (DEMOG_PI and the Bartik demographics) come
+  from Homescan in both sources, so they cannot explain the source gap.
+
+Why RMS gives a much larger theta is the price-concept question (EL,
+2026-10-19), taken up in =docs/rms-prices.org=.
