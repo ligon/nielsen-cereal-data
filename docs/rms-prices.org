@@ -77,7 +77,7 @@ Most important first.  Measured unless marked otherwise.
    as the panelist perceived it; 41.4% of dollars carry one.  Keeping only
    non-deal purchases lowers the two-way correlation (0.352).
 7. *Loyalty cards affect both sources the same way at covered stores*
-   (documented; ELN).  The weekly average mixes card and non-card buyers,
+   (follows from CP p. 20 and RMS p. 16, note F; ELN pp. 11-12).  The weekly average mixes card and non-card buyers,
    so both sources overstate what a card-holder paid.  This does not
    create disagreement between the two sources.
 
@@ -228,7 +228,7 @@ purchase records with the panel builder's own helpers (AM imports: trips
 on (trip_code_uc, panel_year), household DMA, quarter of purchase date,
 CTL* dropped, 2021+ brand crosswalk, OZ only, the panel's 45 j and 65 m).
 Check: the all-purchases rebuild reproduces =market_panel.parquet=
-exactly.  It has the same 214,637 cells, a maximum relative price
+exactly on the 2006-2024 quarters.  It has the same 214,637 cells, a maximum relative price
 difference of 0.0, and identical =n_transactions=.
 
 Each purchase is then tagged by the RMS stores with module-1344 movement
