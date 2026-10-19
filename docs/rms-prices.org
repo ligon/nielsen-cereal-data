@@ -571,11 +571,15 @@ price variation is not classical noise around the RMS price.  It is
 largely the price of a different retail sector, plus the households' own
 choice of weeks.  So these numbers cannot sign its effect on homog's
 theta, and they are consistent with the theta-gap note's finding that
-thicker panel cells do not move the panel toward RMS.  The direct test is
-homog on the panel rebuilt from covered purchases only.  Those cells are
-variant =covered_gross= of =hs_cells.parquet=, which =python
-src/rms_prices.py hs --outdir DIR= regenerates in about two minutes (the
-copy used here was in job scratch).  Whether to run it is EL's call.
+thicker panel cells do not move the panel toward RMS.  The direct test,
+homog on the panel rebuilt from covered purchases only, was run (EL,
+2026-10-19; =docs/rms-theta-gap.org=, "Coverage test"): covered cells give
+theta 0.71 and a random set of trips with the same dollar share 0.73,
+against 1.22 for the full panel and 2.26 for RMS.  Coverage does not
+explain the theta gap; thinning the panel's cells lowers its theta.  The
+cells are variant =covered_gross= of
+=Data/NielsenScanner/rms/prices/hs_cells.parquet= (group-only; =python
+src/rms_prices.py hs --outdir DIR= regenerates it in about two minutes).
 
 * 8. What is not established
 
@@ -605,4 +609,6 @@ copy used here was in job scratch).  Whether to run it is EL's call.
   timing and mix shown in 6.6.  Also why the Malt-O-Meal brands keep a
   0.05 gap even at covered retailers (package-size mapping, or bag sizes
   sold mainly through some chains, is a guess).
-- The theta consequence (section 7).
+- The theta consequence beyond coverage.  Restricting the panel to
+  covered purchases does not move theta toward RMS (section 7); what does
+  separate the two sources' thetas is open.

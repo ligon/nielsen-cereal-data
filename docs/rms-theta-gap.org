@@ -89,7 +89,10 @@ as indicative only.  R4's SE is NaN.
    while its sd of log price falls, which is what noise would do.  But RMS's
    theta rises in the largest tertile too, and RMS stays about 1.8x the
    panel even where Homescan's samples are biggest.  In tertile 2, the only
-   pair where both runs converged, the ratio is 1.75.
+   pair where both runs converged, the ratio is 1.75.  (The coverage
+   test below qualifies this: thinning the panel's cells lowers its
+   theta, so sampling noise does pull the panel's theta down; what the
+   tertiles rule out is noise as the whole story.)
 4. *theta varies with market size within each source.*  Both sources give a
    much higher theta in the largest third of DMAs (panel 2.63, RMS 4.85)
    than in the rest.  A single theta pooled over all markets averages over
@@ -177,3 +180,70 @@ What it shows:
 
 Why RMS gives a much larger theta is the price-concept question (EL,
 2026-10-19), taken up in =docs/rms-prices.org=.
+
+* Coverage test: homog on panel cells rebuilt from purchase subsets (2026-10-19)
+
+The price note (=docs/rms-prices.org=) found that only 46.6% of the
+panel's cereal dollars are spent at chains that report to RMS.  Its
+proposed test: re-estimate =homog= on panel cells rebuilt from purchases at
+those chains only.  If coverage explained the gap, theta on those cells
+would move toward RMS's 2.26.  EL asked for the test (2026-10-19).
+
+Method:
+- Cells: =src/rms_prices.py hs --outdir Data/NielsenScanner/rms/prices=
+  (e504245) rebuilds every panel cell from the raw purchases.  Its
+  all-purchases variant reproduces =market_panel.parquet= exactly (214,637
+  cells, maximum relative price difference 0, no =n_transactions=
+  mismatch).  Each variant re-aggregates servings, revenue and
+  =n_transactions= from a subset of purchases; price = revenue / servings.
+- Covered: the trip's store is an RMS store with cereal movement in that
+  calendar year, or its =retailer_code= is one of those stores' chains.
+- Placebo: a seeded random split of trips, each trip kept with probability
+  equal to the covered share of dollars (46.6%).  H4 is the trips it left
+  out (53.4%, the uncovered share).
+- Driver: CerealDemand =src/rms_theta_gap.py= H0-H4 (7e74c2f, eaef4f6).
+  Each variant's servings, revenue, =n_transactions= and prices replace
+  the panel's on the cells it reaches.  The other columns are the panel's,
+  and the homog path reads only revenue, prices, the nutrients and
+  brand_descr.  H0 (all purchases) writes a file identical to P0's in
+  every column and reproduces its theta.
+
+| exp | panel cells built from | N | theta | SE | theta_std | sigma_logp | J_cluster | converged |
+|-|-|-|-|-|-|-|-|-|
+| H0 | all purchases (route check; = P0) | 214,637 | 1.2222 | 0.0669 | 0.1563 | 0.1279 | 2595.2 | True |
+| H1 | purchases at RMS chains (46.6% of dollars) | 195,046 | 0.7104 | 0.0437 | 0.1212 | 0.1706 | 1240.6 | True |
+| H2 | random trips, H1's dollar share (placebo) | 207,120 | 0.7253 | 0.0456 | 0.1108 | 0.1527 | 1604.3 | *False* |
+| H3 | purchases outside RMS chains (53.4%) | 206,181 | 0.9987 | 0.0594 | 0.1474 | 0.1476 | 2365.4 | True |
+| H4 | the other random trips, H3's share | 209,088 | 0.9838 | 0.0519 | 0.1459 | 0.1483 | 2102.3 | True |
+| D6 | RMS, all cells (=homog.rms=) | 218,986 | 2.2568 | 0.0576 | 0.2281 | 0.1011 | 6689.2 | True |
+
+All runs have 4,940 (t, m) clusters and 16 J degrees of freedom; every
+cluster-wild J p-value is at the bootstrap floor.
+
+What it shows:
+1. *Coverage does not explain the gap.*  Panel cells from purchases at RMS
+   chains give theta 0.71, further below RMS (2.26) than the full panel
+   (1.22).
+2. *A random set of trips of the same size gives the same theta.*  At
+   46.6% of dollars: covered 0.71, random 0.73.  At 53.4%: uncovered 1.00,
+   random 0.98.  Which retailers the purchases came from does not move
+   theta beyond what removing that many purchases does.  H2 did not
+   converge, so the cleaner pair is H3/H4, both converged.
+3. *Thinning the panel's cells lowers theta steeply.*  Building cells from
+   about half the purchases raises the sd of log price (0.128 to
+   0.148-0.171) and lowers theta from 1.22 to 0.71-1.00.  That is what
+   noise in the unit values would do: it attenuates theta.  This qualifies
+   point 3 of "What the runs show".  The panel's theta does depend on how
+   many purchases stand behind each cell, so Homescan sampling noise does
+   pull it down.  It is not established that the full panel is noisy
+   enough for this to account for the RMS gap.  The tertiles show RMS
+   about 1.8x the panel even in the largest DMAs, and RMS's theta rises
+   with market size too.
+4. The response to thinning is uneven: 0.73 at 46.6% and 0.98 at 53.4% of
+   dollars (one random split, and H2 unconverged), then 1.22 at 100%.
+   Read its size as rough.
+
+Not run (EL's call): a thinning curve, homog on several random splits of
+trips at, say, 25/50/75% with a few seeds each (about 4 minutes per run on
+CPU).  It would show whether the panel's theta levels off as cells
+thicken, and where.
