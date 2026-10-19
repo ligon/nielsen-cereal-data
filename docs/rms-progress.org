@@ -17,6 +17,18 @@ D2 and D3 end to end; =make rms-test= runs the D3 test.  Stages:
 4. =src/rms_convert.py log= -> =docs/rms-d2-log.org=
 5. =src/rms_market_panel.py= -> =market_panel_rms.parquet=, diagnostics,
    =docs/rms-d3-log.org=
+Verified 06:30 PDT: =make rms= ran end to end (skipped extraction, master and
+the 19 years as done; rebuilt D3 in 3 min; output (218986, 25) identical in
+shape; the two logs changed only in their =#+date= line), then
+=make rms-test=: 15 passed.
+
+* Open items / notes for the validate agent
+- D4(a), (b): compute from =market_panel_rms.parquet= and the panel directly
+  (inside-share sums; RMS/panel 45-brand servings per (t, m)); nothing pre-built.
+- D4(c), (d): =rms/diagnostics/upc_routes.parquet= and =funnel_by_year.parquet=
+  (see D3 below); the six fallback-route brand-years are listed under D3.
+- The =rms_caveat= text says BLP-family =check_spec= refuses =source='rms'=;
+  that is D5 (wiring agent), not verified here.
 
 * D2 --- per-year parquet: DONE
 - Outputs: =/global/scratch/fsa/fc_jevons/ligon/Data/NielsenScanner/rms/<yr>/=
