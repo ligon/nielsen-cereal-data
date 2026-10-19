@@ -53,4 +53,60 @@ D2 and D3 end to end; =make rms-test= runs the D3 test.  Stages:
   2022 starts 2022-01-08), so no week is double-counted; D3 still enforces
   one-file-per-week (=week_sources.parquet=).
 
-* D3 --- market_panel_rms.parquet: IN PROGRESS
+* D3 --- market_panel_rms.parquet: DONE
+- Output: =/global/scratch/fsa/fc_jevons/ligon/Data/NielsenScanner/rms/market_panel_rms.parquet=
+  (218,986 cells; 76 quarters Q1Y2006..Q4Y2024 x 65 DMAs x 45 brands; 10 MB;
+  0640).  Schema metadata keys =rms_caveat= (Amendment 1 / B1 text) and
+  =rms_build=, beside pandas' own.  Build: 3 min (JOBS=8).
+- Code: =src/rms_market_panel.py= (every definition cites
+  =src/aggregate_markets.py:<line>= in its docstring and inline).
+- Test: =tests/test_rms_market_panel.py=, 15 tests, run with
+  =/global/scratch/fsa/fc_jevons/ligon/mirrors/CerealDemand/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_rms_market_panel.py=
+  (or =make rms-test=): 15 passed in 10 s.  Asserts identical column names
+  and dtypes (index levels too) to =market_panel.parquet=; m in the panel's
+  DMAs; t exactly Q1Y2006..Q4Y2024; j subset of the 45; market_size, n_hh,
+  n_persons equal to the panel's for the same (t, m); prices, shares, W_exp,
+  Z_*, ids by the panel's formulas; nutrients and brand_descr equal the
+  panel's per j; =rms_caveat= present; and two cells recomputed
+  independently from the D2 parquet with pyarrow filters (Q2Y2016 x DMA 501
+  via rms_versions+master; Q3Y2022 x DMA 501 via the fips->DMA map, with the
+  same-year name route re-derived from Homescan purchases + crosswalk).
+- Build log: =docs/rms-d3-log.org= (filter funnel by year, mapping routes,
+  cells per year vs panel, inside-share sums).
+- Diagnostics for D4 (=rms/diagnostics/=):
+  - =funnel_by_year.parquet=: module-1344 dollars and rows by cumulative
+    filter stage (panel order), plus unconditional dollars mapped to the 45
+    brands, to any DMA, to the 65 DMAs  -> D4(d).
+  - =upc_routes.parquet=: per (year, upc) route (=classic_version=,
+    =hms_same_year=, =hms_other_year=, =classic_master_fallback=,
+    =unmapped=, =not_in_map=), =brand_code_uc= used, =name_route_code=,
+    =master_code= (latest version), size, =in_45=, dollars  -> D4(c).
+  - =week_sources.parquet=: file of origin of each week_end.
+- Mapping rules (as built):
+  - classic: =rms_versions_<yr>= (upc, upc_ver_uc) -> master on (upc,
+    upc_ver_uc); upc unique per year, so no version ambiguity.
+  - 2021+: upc -> =brand_descr_hms= from Homescan =purchases_<yr>= of the
+    SAME year (99.0-99.9% of dollars), else the nearest other 2021+ year
+    (tie -> earlier; 0.1-1.0%), -> crosswalk =drop_duplicates('brand_descr_2021')=
+    in file order (AM:245-250).  UPCs no Homescan household bought in
+    2021-24: classic master at the HIGHEST upc_ver_uc (<0.01% of dollars).
+    A name not in the crosswalk leaves the UPC unmapped (dropped, as in the
+    panel): 9-18% of 2021-24 dollars, incl. all CTL.  The product_descr
+    prefix fallback in the reuse plan was not needed (unmapped < 0.01%).
+  - size: same route (=size1_amount_hms/1000=, =size1_unit_hms= stripped;
+    master =size1_amount=); OZ only; servings = units x size (no multi).
+  - store -> DMA: classic =stores_<yr>.dma_code= (a few stores blank ->
+    dropped); 2021+ the panel's =_build_fips_to_dma= imported from
+    =src/aggregate_markets.py= (99.6-99.9% of dollars mapped).
+  - n_transactions = number of store-week-UPC movement rows.
+  - quarter t = quarter of =week_end= (2021 file's week 2022-01-01 -> Q1Y2022).
+- Checks: Q2Y2016 inside-share sums min/median/max 3.99/32.56/79.54
+  (Ground: 3.6/31.4/78.8 on a partial store map) -> consistent with B1.
+  0 cells dropped for bad price or missing market_size.
+- Brand-years: every panel brand-year 2006-2024 is in RMS.  RMS-only
+  brand-years (6), all from fallback routes with trivial dollars in the kept
+  cells: 2023 G M TRIX ($14), 2023 POST COCOA PEBBLES ($119), 2024 G M FIBER
+  ONE ($5), 2024 G M TRIX ($4), 2024 KASHI GO LEAN CRUNCH! ($14), 2024 POST
+  COCOA PEBBLES ($237).  They exist because the panel's name route loses
+  these brands (e.g. Trix -> 747763) while a few RMS UPCs bypass it.  For
+  D4(c); kept, not silently dropped.
