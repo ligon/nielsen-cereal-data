@@ -38,13 +38,21 @@ Stage `probe` (one year): price-ending digits and same-price-across-
   households shares by store class, to ask whether prices outside RMS are
   typed or imputed (inconclusive; docs/rms-prices.org 6.7).
 
+Stage `thin` (thinning curve; docs/rms-theta-gap.org): the panel's cells
+  rebuilt from random subsets of trips.  Each seed draws one uniform per
+  trip and share s keeps the trips with u < s, so one seed's subsets are
+  nested.  Keeping every trip must reproduce the panel (checked and
+  reported).  Seeds are SEED + 1, SEED + 2, ..., distinct from the placebo's.
+
 Outputs (Nielsen-derived; stay on the cluster, never committed):
   OUTDIR/hs_stats.json, OUTDIR/hs_cells.parquet, OUTDIR/match_<yr>.json,
-  OUTDIR/probe_<yr>.json
+  OUTDIR/probe_<yr>.json, OUTDIR/thin_stats.json, OUTDIR/thin_cells.parquet
 
 Usage:  python src/rms_prices.py hs    --outdir DIR             (~2 min)
         python src/rms_prices.py match --outdir DIR [--year 2014]
         python src/rms_prices.py probe --outdir DIR [--year 2014]
+        python src/rms_prices.py thin  --outdir DIR [--shares 0.25 0.5 0.75]
+                                       [--nseeds 3]
 """
 import argparse
 import json
@@ -646,17 +654,86 @@ def stage_probe(outdir, year):
                                                           default=float))
 
 
+# ---------------------------------------------------------------------------
+# Stage thin: random trip subsets (thinning curve)
+# ---------------------------------------------------------------------------
+
+def stage_thin(outdir, shares, nseeds):
+    t0 = time.time()
+    panel = pd.read_parquet(PANEL_CLEAN / "market_panel.parquet").reset_index()
+    panel["t"] = panel["t"].astype(str)
+    J, M = set(panel["j"].astype(int)), set(panel["m"].astype(int))
+    fips_to_dma = AM._build_fips_to_dma(PANEL_RAW)
+    tq = {f"Q{q}Y{y}" for y in range(T_LO, T_HI + 1) for q in range(1, 5)}
+    parts = []
+    for y in range(T_LO - 1, T_HI + 1):
+        _, u = load_year(y, fips_to_dma)
+        u = u[u["brand_code_uc"].isin(J) & u["DMA_Cd"].isin(M)
+              & u["t"].isin(tq)]
+        u = u.rename(columns={"DMA_Cd": "m", "brand_code_uc": "j"})
+        parts.append(u[KEY + ["servings", "total_price_paid", "trip_code_uc",
+                              "panel_year"]])
+        print(f"  {y}: universe {len(u):,} rows ({time.time() - t0:.0f} s)",
+              flush=True)
+    h = pd.concat(parts, ignore_index=True)
+    del parts
+    gross = h["total_price_paid"].to_numpy(float)
+
+    # check: every trip kept reproduces the panel
+    chk = cells(h, gross).merge(
+        panel.loc[panel["t"].isin(tq), KEY + ["prices", "n_transactions"]],
+        on=KEY, how="outer", suffixes=("", "_panel"), indicator=True)
+    both = chk[chk["_merge"] == "both"]
+    S = {"rows": int(len(h)), "shares": list(shares), "check": {
+        "only_rebuilt": int((chk["_merge"] == "left_only").sum()),
+        "only_panel": int((chk["_merge"] == "right_only").sum()),
+        "max_abs_rel_price_diff": float(
+            (both["prices"] / both["prices_panel"] - 1).abs().max()),
+        "n_trans_mismatch": int((both["n_transactions"]
+                                 != both["n_transactions_panel"]).sum())}}
+    print("check:", S["check"], flush=True)
+
+    trip_key = h["trip_code_uc"].astype(np.int64) * 10000 + h["panel_year"]
+    codes, inv = np.unique(trip_key.to_numpy(), return_inverse=True)
+    S["trips"] = int(len(codes))
+    S["variants"], out = {}, []
+    for k in range(1, nseeds + 1):
+        u = np.random.default_rng(SEED + k).random(len(codes))[inv]
+        for s in shares:
+            keep = u < s
+            name = f"thin{round(100 * s)}_s{k}"
+            c = cells(h[keep], gross[keep])
+            out.append(c.assign(variant=name))
+            S["variants"][name] = {
+                "seed": SEED + k, "share": s, "cells": int(len(c)),
+                "rows": int(keep.sum()),
+                "dollar_share": share(gross[keep].sum(), gross.sum())}
+            print(f"  {name}: {len(c):,} cells, "
+                  f"{S['variants'][name]['dollar_share']:.3f} of dollars",
+                  flush=True)
+    pd.concat(out, ignore_index=True).to_parquet(outdir / "thin_cells.parquet")
+    S["seconds"] = time.time() - t0
+    (outdir / "thin_stats.json").write_text(json.dumps(S, indent=1,
+                                                       default=float))
+    print(f"wrote {outdir}/thin_stats.json ({S['seconds']:.0f} s)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("stage", choices=["hs", "match", "probe"])
+    ap.add_argument("stage", choices=["hs", "match", "probe", "thin"])
     ap.add_argument("--outdir", required=True, type=Path)
     ap.add_argument("--year", type=int, default=2014)
+    ap.add_argument("--shares", nargs="+", type=float,
+                    default=[0.25, 0.5, 0.75])
+    ap.add_argument("--nseeds", type=int, default=3)
     a = ap.parse_args()
     a.outdir.mkdir(parents=True, exist_ok=True)
     if a.stage == "hs":
         stage_hs(a.outdir)
     elif a.stage == "match":
         stage_match(a.outdir, a.year)
+    elif a.stage == "thin":
+        stage_thin(a.outdir, a.shares, a.nseeds)
     else:
         stage_probe(a.outdir, a.year)
 
