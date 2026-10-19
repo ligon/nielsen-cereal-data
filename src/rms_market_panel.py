@@ -307,7 +307,7 @@ def year_cells(y, keep_weeks, j45, m65, stores=None):
     funnel = dict.fromkeys(FUNNEL, 0.0)
     funnel_rows = dict.fromkeys(FUNNEL, 0)
     dropped_week_dollars = 0.0
-    rev_45 = rev_dma = rev_65 = 0.0
+    rev_45 = rev_dma_any = rev_65 = 0.0
     parts = []
     upc_rev = np.zeros(len(uidx) + 1)
     unmapped_rev = {}
@@ -320,7 +320,9 @@ def year_cells(y, keep_weeks, j45, m65, stores=None):
         units = b.column("units").to_numpy().astype("float64")
         prmult = b.column("prmult").to_numpy()
         price = b.column("price").to_numpy()
-        ok = (prmult > 0) & (price > 0)
+        # units > 0: a zero-unit row adds no revenue or servings, and the
+        # panel's n_transactions counts real purchases only (AM:636-645)
+        ok = (prmult > 0) & (price > 0) & (units > 0)
         wk_ok = np.isin(wk, kw)
         dropped_week_dollars += float(np.sum(
             units[ok & ~wk_ok] * price[ok & ~wk_ok] / prmult[ok & ~wk_ok]))
@@ -357,7 +359,7 @@ def year_cells(y, keep_weeks, j45, m65, stores=None):
             funnel[name] += float(rev[mask].sum())
             funnel_rows[name] += int(mask.sum())
         rev_45 += float(rev[ok & in45[ui] & ~ctl[ui]].sum())
-        rev_dma += float(rev[ok & (d >= 0)].sum())
+        rev_dma_any += float(rev[ok & (d >= 0)].sum())
         rev_65 += float(rev[ok & in65_s[si]].sum())
 
         k = mask
@@ -382,7 +384,7 @@ def year_cells(y, keep_weeks, j45, m65, stores=None):
         umap = pd.concat([umap, unm], ignore_index=True)
     fun = {"year": y, **{f"dollars_{k}": v for k, v in funnel.items()},
            **{f"rows_{k}": v for k, v in funnel_rows.items()},
-           "dollars_brand_in_45": rev_45, "dollars_dma_mapped": rev_dma,
+           "dollars_brand_in_45": rev_45, "dollars_dma_any": rev_dma_any,
            "dollars_dma_in_65": rev_65,
            "dollars_dropped_duplicate_weeks": dropped_week_dollars,
            "seconds": round(time.time() - t0, 1)}
@@ -543,7 +545,7 @@ def write_log(panel, fun, routes, log, mp, path):
         L.append(f"| {int(r['year'])} | {a / 1e6:,.1f} | "
                  + " | ".join(f"{s:.3f}" for s in sh) + " | "
                  + f"{r['dollars_brand_in_45'] / a:.3f} | "
-                 f"{r['dollars_dma_mapped'] / a:.3f} | "
+                 f"{r['dollars_dma_any'] / a:.3f} | "
                  f"{r['dollars_dma_in_65'] / a:.3f} |")
     L += ["", "* UPC mapping routes (share of the year's module-1344 dollars)",
           ""]

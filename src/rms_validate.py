@@ -594,7 +594,7 @@ def sec_funnel(fun):
         a = x["dollars_all"]
         rows.append([int(x["year"]), f(a / 1e6, 1),
                      f(x["dollars_brand_in_45"] / a),
-                     f(x["dollars_dma_mapped"] / a),
+                     f(x["dollars_dma_any"] / a),
                      f(x["dollars_dma_in_65"] / a),
                      f(x["dollars_t_in_range"] / a)])
     L = ["* 8. (d) Share of module-1344 revenue mapped, per year",
@@ -664,7 +664,7 @@ def sec_summary(p, r, c, sp, sr, fun, d6):
     fac = (vr / vp).dropna()
     a = fun["dollars_all"]
     s45 = fun["dollars_brand_in_45"] / a
-    sdma = fun["dollars_dma_mapped"] / a
+    sdma = fun["dollars_dma_any"] / a
     L = ["* 0. Summary (numbers only; sections 1-9 have the detail)", "",
          f"- Common cells, {T_LO}-{T_HI}: {len(c):,} = "
          f"{len(c) / len(pr):.1%} of the panel's and {len(c) / len(r):.1%} of "
@@ -736,6 +736,12 @@ def main():
          "- Coverage: RMS describes the RMS-reporting stores only (~43% of",
          "  cereal dollars; one non-reporting chain is 21% alone); the panel",
          "  is the full-coverage check (charter section 0).",
+         "- Quarters: RMS assigns t by the week's end date (Saturday), the panel",
+         "  by purchase date (AM:362-371).  A week that straddles a quarter end",
+         "  falls in the later quarter, so some RMS quarters hold 12 or 14 weeks",
+         "  (e.g. Q1Y2006 12, Q3Y2006 14).  RMS servings, revenue and",
+         "  n_transactions levels move by up to about 8% for that reason alone;",
+         "  prices and W_exp are ratios and are not affected.",
          "- AM:<line> cites =src/aggregate_markets.py= (the panel builder).",
          "",
          "#+begin_quote",

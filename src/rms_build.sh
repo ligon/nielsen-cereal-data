@@ -7,6 +7,8 @@
 #        2006-2020 monoliths (src/rms_extract_classic.sh; idempotent, skips
 #        years whose <yr>.done marker exists)
 #     2. classic product master (module 1344, all versions) -> parquet
+#        (extracts Latest/products.tsv from Master_Files_2006-2020.tgz
+#        first if it is not on disk)
 #     3. every year 2006-2024 -> per-year parquet + stats.json
 #        (src/rms_convert.py; 2021+ is streamed from the .tgz, never unpacked)
 #     4. per-year log -> docs/rms-d2-log.org (committed)
@@ -39,6 +41,17 @@ if [[ $stage == d2 || $stage == all ]]; then
     if (( ${#classic[@]} )); then src/rms_extract_classic.sh "${classic[@]}"; fi
 
     echo "[2/5] classic product master  $(date -Is)"
+    # rms_convert.py master reads extracted/Master_Files_2006-2020/Latest/
+    # products.tsv (MASTER_TSV).  Extract that one member if it is missing.  It
+    # is a raw input, not an output, so FORCE=1 does not redo it.
+    scanner=$DATA/NielsenScanner
+    member=Master_Files_2006-2020/Latest/products.tsv
+    if [[ ! -f $scanner/extracted/$member ]]; then
+        echo "      extracting $member from Master_Files_2006-2020.tgz"
+        mkdir -p "$scanner/extracted"
+        pigz -dc "$scanner/Master_Files_2006-2020.tgz" \
+            | tar -x -C "$scanner/extracted" "$member"
+    fi
     "$PYTHON" src/rms_convert.py master "${force[@]}"
 
     echo "[3/5] per-year parquet (JOBS=$JOBS)  $(date -Is)"

@@ -9,7 +9,9 @@ for the theta-gap decomposition (CerealDemand src/rms_theta_gap.py).
 The stores_<yr> tables list a near-static universe (38,285 stores in every
 year 2006-2010), so presence is read from the movement itself: a store is
 present in a year if it has at least one module-1344 movement row there with
-prmult > 0 and price > 0 (the D3 filter `ok`, src/rms_market_panel.py).
+prmult > 0 and price > 0.  (This is D3's `ok` filter as it stood when the
+balanced set was built, before D3 also required units > 0.  Zero-unit rows number 2 in 2020, 408 in 2021 and 16,548 in
+2024; they carry no dollars.)
 
 Writes (group-only):
   OUT/diagnostics/stores_by_year.parquet   year, store_code_uc, rows, dollars
