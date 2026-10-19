@@ -1,7 +1,7 @@
 CONFIG ?= config/default.yaml
 PYTHON ?= .venv/bin/python
 
-.PHONY: all extract crosswalk nutrition markets households demographics help clean-data rms rms-test
+.PHONY: all extract crosswalk nutrition markets households demographics help clean-data rms rms-test rms-validate
 
 help:
 	@echo "nielsen-cereal-data pipeline"
@@ -16,6 +16,7 @@ help:
 	@echo "  make all          Run full pipeline"
 	@echo "  make rms          RMS second source: per-year parquet (D2) + market_panel_rms (D3)"
 	@echo "  make rms-test     D3 contract test for market_panel_rms.parquet"
+	@echo "  make rms-validate D4 validation report, RMS vs panel -> docs/rms-validation.org"
 	@echo ""
 	@echo "Override config:   make all CONFIG=config/custom.yaml"
 	@echo "Override years:    make extract YEARS='2014 2018'"
@@ -69,3 +70,8 @@ rms:
 
 rms-test:
 	$(RMS_PYTHON) -m pytest -q -p no:cacheprovider tests/test_rms_market_panel.py
+
+# D4: reads market_panel_rms.parquet, rms/diagnostics/*, the panel, and (if
+# present) rms/laws/homog_compare.json from CerealDemand src/rms_homog_compare.py.
+rms-validate:
+	$(RMS_PYTHON) src/rms_validate.py
