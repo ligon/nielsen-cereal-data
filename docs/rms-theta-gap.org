@@ -32,6 +32,9 @@ is a hypothesis for EL, not a finding.
 - DMA split (R6/P6, R7/P7): DMAs whose mean panel =n_hh= (Homescan sample
   households) is at or above the median, 511, are "large" (33 of 65).  Whole
   markets, so every brand in a market is kept.
+- DMA-size tertiles (R8-R10, P8-P10): the same mean =n_hh=, cut into thirds
+  (22, 21 and 22 DMAs; mean sample 256-373, 375-743 and 763-2,758
+  households).
 - Data and laws: =Data/NielsenScanner/rms/theta_gap/<exp>/= (group-only),
   summary in =theta_gap/summary.json=; never the shared =var/laws=.
 
@@ -54,65 +57,79 @@ is a hypothesis for EL, not a finding.
 | P6 | panel, large DMAs | 2006-2024 | 110,374 | 2,508 | 2.2828 | 0.0944 | 0.2564 | 0.1123 | 2355.9 | 16 | True |
 | R7 | RMS, small DMAs | 2006-2024 | 107,734 | 2,432 | 2.7961 | 0.0837 | 0.2916 | 0.1043 | 3485.4 | 16 | *False* |
 | P7 | panel, small DMAs | 2006-2024 | 104,263 | 2,432 | 0.9904 | 0.0704 | 0.1410 | 0.1423 | 938.9 | 16 | True |
+| R8 | RMS, DMA tertile 1 (small) | 2006-2024 | 74,074 | 1,672 | 2.2279 | 0.0940 | 0.2301 | 0.1033 | 2581.3 | 16 | *False* |
+| P8 | panel, DMA tertile 1 (small) | 2006-2024 | 71,248 | 1,672 | 0.9201 | 0.0961 | 0.1335 | 0.1450 | 815.9 | 16 | True |
+| R9 | RMS, DMA tertile 2 | 2006-2024 | 70,714 | 1,596 | 2.1727 | 0.1157 | 0.2298 | 0.1058 | 1604.1 | 16 | True |
+| P9 | panel, DMA tertile 2 | 2006-2024 | 69,602 | 1,596 | 1.2432 | 0.1012 | 0.1604 | 0.1290 | 523.9 | 16 | True |
+| R10 | RMS, DMA tertile 3 (large) | 2006-2024 | 74,198 | 1,672 | 4.8471 | 0.1761 | 0.4517 | 0.0932 | 2641.4 | 16 | True |
+| P10 | panel, DMA tertile 3 (large) | 2006-2024 | 73,787 | 1,672 | 2.6275 | 0.1007 | 0.2805 | 0.1067 | 1965.8 | 16 | *False* |
 
 "Common cells" are the (t, m, j) cells in both files.  "Thick" cells are
-common cells with panel =n_transactions= >= 17, the median.  Four
-optimizations did not converge (R3, R4, P4, R7); read their theta as
-indicative only.  R4's SE is NaN.
+common cells with panel =n_transactions= >= 17, the median.  Six
+optimizations did not converge (R3, R4, P4, R7, R8, P10); read their theta
+as indicative only.  R4's SE is NaN.
 
-* What the converged runs show
+* What the runs show
 
 1. *Cell composition does not explain the gap.*  On identical cells, RMS gives
    2.33 and the panel 1.23 (R1, P1).  Dropping the 4,591 RMS-only cells
    raises RMS's theta slightly.
 2. *The RMS store universe does not explain it.*  With the same 17,557 stores
    in every year, RMS theta is 2.43 (R5), not lower than 2.26.
-3. *Where Homescan samples are large, the two sources roughly agree; where
-   they are small, the panel falls.*  In the 33 large DMAs, RMS gives 2.53 and
-   the panel 2.28 (R6, P6; both converged).  In the 32 small DMAs, the panel
-   gives 0.99 (P7).  The panel's sd of log price rises from 0.112 to 0.142
-   between the two halves; RMS's barely moves (0.098 to 0.104).  RMS stays
-   high in every subsample (2.26-2.80; the small-DMA 2.80 is unconverged),
-   though it is not constant across them: the spread is several SEs.
+3. *Homescan sampling noise does not explain it either.*  By DMA-size tertile
+   (smallest Homescan samples first):
 
-Two runs are superseded or weak:
+   | tertile | panel theta | RMS theta | RMS / panel | panel sigma_logp | RMS sigma_logp |
+   |-|-|-|-|-|-|
+   | 1 (small) | 0.92 | 2.23* | 2.4 | 0.145 | 0.103 |
+   | 2 | 1.24 | 2.17 | 1.8 | 0.129 | 0.106 |
+   | 3 (large) | 2.63* | 4.85 | 1.8 | 0.107 | 0.093 |
+
+   (* did not converge.)  The panel's theta rises with Homescan sample size
+   while its sd of log price falls, which is what noise would do.  But RMS's
+   theta rises in the largest tertile too, and RMS stays about 1.8x the
+   panel even where Homescan's samples are biggest.  In tertile 2, the only
+   pair where both runs converged, the ratio is 1.75.
+4. *theta varies with market size within each source.*  Both sources give a
+   much higher theta in the largest third of DMAs (panel 2.63, RMS 4.85)
+   than in the rest.  A single theta pooled over all markets averages over
+   that variation.  The very large J statistics in every run (p at the
+   bootstrap floor) fit a model that is misspecified across markets.
+
+Superseded or weak runs:
+- *The two-way DMA split (R6-P7) is superseded by the tertiles.*  Its
+  near-agreement in large DMAs (RMS 2.53, panel 2.28) mixed tertiles 2 and 3.
+  An earlier version of this note read it as "the sources agree where
+  Homescan samples are large"; the tertiles do not support that.
 - The thick-cell pair (R2, P2) selects cells on panel =n_transactions=, a
-  quantity, so it selects on the outcome.  That biases both levels and hits
-  the panel's own errors hardest.  The whole-market split (R6-P7) replaces it
-  as the test of Homescan sampling noise.  (During the run, R2/P2 first
-  read as evidence against the noise hypothesis; on these grounds it is not.)
+  quantity, so it selects on the outcome.  That biases both levels.
 - The window split (R3/P3, R4/P4) has three of four runs unconverged.  RMS's
   full-period theta lies above both of its windows (1.52, 1.29), but with
   R3 and R4 unconverged that is not established.
 
 * Open puzzle: subsample thetas do not average to the full sample
 
-RMS's full-sample theta (2.26) is below both of its DMA halves (2.53, 2.80),
-and the panel's (1.22) sits near its small-DMA value (0.99), far from its
-large-DMA one (2.28).  A two-way-FE GMM theta is not a weighted average of
+RMS's full-sample theta (2.26) is below both of its DMA halves (2.53,
+2.80).  By tertile it sits next to the lower two (2.23, 2.17), while the top
+third gives 4.85.  A two-way-FE GMM theta is not a weighted average of
 subsample thetas: splitting the markets refits the product fixed effects
-separately in each half, and the full-sample estimate leans on whichever
-cells carry the most residual price variation.  For the panel those are
-plausibly the small-DMA cells, whose noisier prices have the larger sd.
-That is a hypothesis, not a finding.
+separately in each subsample, and the full-sample estimate leans on
+whichever cells carry the most residual price variation.
 
-* The question this raises (for EL)
+* What this leaves (for EL)
 
-The pattern is what measurement error in Homescan prices would produce: the
-panel's theta is low where its samples are small and its prices noisiest,
-and RMS is not affected that way.  The obvious objection is that homog is IV
-GMM with LF instruments, and classical error in a regressor with valid
-instruments does not attenuate a linear IV estimate.  If this is measurement
-error, the channel would be division bias (the panel's unit value =
-revenue / servings shares its noise with the expenditure share), or the
-nonlinearity of the K-aggregator model.  The CerealDemand handoff's "THE
-BLP-CES STORY" section already discusses division bias contaminating the
-own-price moment.
+What remains is a difference in what the two sources measure.  The panel
+records the unit value Homescan households paid, across all retailers,
+including the non-reporting chain (21% of cereal dollars).  RMS records
+shelf prices at the reporting stores.  D4 found that about half of each
+source's residual price variation, after product and (t, m) fixed effects,
+is not shared with the other.  The panel's unit value (revenue / servings)
+also shares its noise with the expenditure share, the division-bias channel
+the CerealDemand handoff's "THE BLP-CES STORY" section discusses.
 
-If that holds, the declared panel =homog= theta of 1.23 may be understated,
-with the large-DMA panel estimate (2.28) and RMS (2.26-2.53) suggesting a
-range near 2.3-2.5.  Whether to read it that way is EL's call.
-
-A natural next check, not run: DMA-size tertiles on both sources (6 runs,
-about 30 minutes), to see whether the panel's theta rises steadily with
-Homescan sample size while RMS's does not.
+So the evidence does not say the panel's declared =homog= theta of 1.23 is
+understated, as an earlier version of this note suggested.  It says that
+theta depends on the source and on market size, and that a pooled theta
+hides heterogeneity across markets.  Which price concept the paper's theta
+should rest on, and whether theta should be allowed to vary by market
+size, are EL's calls.
