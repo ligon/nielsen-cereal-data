@@ -34,11 +34,17 @@ Stage `match` (one classic year): Homescan purchases at RMS stores matched
   cell) to split the level gap into recording/imputation, week timing and
   store/UPC mix.
 
-Outputs (Nielsen-derived; stay on the cluster, never committed):
-  OUTDIR/hs_stats.json, OUTDIR/hs_cells.parquet, OUTDIR/match_<yr>.json
+Stage `probe` (one year): price-ending digits and same-price-across-
+  households shares by store class, to ask whether prices outside RMS are
+  typed or imputed (inconclusive; docs/rms-prices.org 6.7).
 
-Usage:  python src/rms_prices.py hs    --outdir DIR
+Outputs (Nielsen-derived; stay on the cluster, never committed):
+  OUTDIR/hs_stats.json, OUTDIR/hs_cells.parquet, OUTDIR/match_<yr>.json,
+  OUTDIR/probe_<yr>.json
+
+Usage:  python src/rms_prices.py hs    --outdir DIR             (~2 min)
         python src/rms_prices.py match --outdir DIR [--year 2014]
+        python src/rms_prices.py probe --outdir DIR [--year 2014]
 """
 import argparse
 import json
@@ -496,7 +502,34 @@ def stage_match(outdir, year):
                                  - mm["coupon_value"] / mm["quantity"]
                                  - mm["unit_p"]).abs() <= 0.01 + 1e-9).mean()),
     }
+    edges = [-np.inf, -0.5, -0.1, -0.01, 0.01, 0.1, 0.5, 0.6, 0.8, np.inf]
+    h_ = np.histogram(lr.to_numpy(), bins=edges)[0] / len(lr)
+    R["match"]["logratio_hist"] = {f"{edges[i]}..{edges[i + 1]}": float(h_[i])
+                                   for i in range(len(h_))}
+    R["match"]["quantity_gt1_share"] = float((mm["quantity"] > 1).mean())
+    q1 = mm["quantity"] == 1
+    R["match"]["within_1c_q1"] = float((absd[q1] <= 0.01 + 1e-9).mean())
+    R["match"]["within_1c_qgt1"] = float((absd[~q1] <= 0.01 + 1e-9).mean())
+    R["match"]["mean_logratio_q1"] = float(lr[q1].mean())
+    R["match"]["mean_logratio_qgt1"] = float(lr[~q1].mean())
     print("match:", R["match"], flush=True)
+    # is the non-matching fifth a few chains (NielsenIQ's documented
+    # exceptions, where panelists enter prices) or spread over all of them?
+    g = (mm.assign(ok=(absd <= 0.01 + 1e-9).to_numpy())
+         .groupby("retailer_code")
+         .agg(ok=("ok", "mean"), dol=("total_price_paid", "sum")))
+    tot = g["dol"].sum()
+    R["by_retailer"] = {
+        "n_retailers": int(len(g)),
+        "dollar_share_ok_ge90": share(g.loc[g["ok"] >= 0.9, "dol"].sum(), tot),
+        "dollar_share_ok_50_90": share(
+            g.loc[(g["ok"] >= 0.5) & (g["ok"] < 0.9), "dol"].sum(), tot),
+        "dollar_share_ok_lt50": share(g.loc[g["ok"] < 0.5, "dol"].sum(), tot),
+        "n_retailers_ok_lt50": int((g["ok"] < 0.5).sum()),
+        "dollar_weighted_median_ok": float(
+            g.sort_values("ok").assign(c=lambda x: x["dol"].cumsum() / tot)
+            .query("c >= 0.5")["ok"].iloc[0])}
+    print("by retailer:", R["by_retailer"], flush=True)
 
     # four pricings of the store-linked purchases, aggregated to (t, m, j)
     sq = (mv.groupby(["store_code_uc", "upc", "t"])[["units", "dollars"]]
@@ -549,17 +582,83 @@ def stage_match(outdir, year):
     print(f"wrote {outdir}/match_{year}.json ({R['seconds']:.0f} s)")
 
 
+def stage_probe(outdir, year):
+    """Are Homescan prices outside RMS typed by panelists or store-data?
+
+    Two fingerprints, by store class (RMS store; RMS chain, other store;
+    outside RMS with a store code; outside RMS without one; and the largest
+    outside chain by cereal dollars, unnamed):
+      - last cent digit of the unit price (typed shelf prices bunch on a
+        chain's price endings; weekly averages spread over all ten digits);
+      - among (store, upc, week) cells bought by >= 2 households, the share
+        where every household's unit price is the same to the cent (a
+        store-week average gives one price to all panelists that week).
+    """
+    stores, chains = rms_sets()
+    fips_to_dma = AM._build_fips_to_dma(PANEL_RAW)
+    panel = pd.read_parquet(PANEL_CLEAN / "market_panel.parquet").reset_index()
+    J, M = set(panel["j"].astype(int)), set(panel["m"].astype(int))
+    us = []
+    for y in (year - 1, year, year + 1):
+        _, u = load_year(y, fips_to_dma)
+        us.append(u)
+    u = pd.concat(us, ignore_index=True)
+    u = u[u["t"].str.endswith(str(year))]
+    u = u[u["brand_code_uc"].isin(J) & u["DMA_Cd"].isin(M)]
+    u = tag(u, stores, chains)
+    u = u[(u["quantity"] > 0) & (u["total_price_paid"] > 0)]
+    sc = u["store_code_uc"].fillna(0).astype(np.int64)
+    unc = ~u["cov"]
+    big = (u[unc].groupby("retailer_code")["total_price_paid"].sum()
+           .idxmax())
+    cls = np.select(
+        [u["st"], u["ch"], unc & (u["retailer_code"] == big),
+         unc & (sc != 0), unc & (sc == 0)],
+        ["rms_store", "rms_chain_other_store", "largest_outside_chain",
+         "outside_with_store_code", "outside_no_store_code"], "other")
+    u["cls"] = cls
+    u["cents"] = np.round(u["total_price_paid"] / u["quantity"] * 100)
+    u["digit"] = (u["cents"] % 10).astype(int)
+    pd_ = pd.to_datetime(u["purchase_date"], format="%Y-%m-%d")
+    u["week_end"] = (pd_ + pd.to_timedelta((5 - pd_.dt.dayofweek) % 7,
+                                           unit="D")).dt.date
+    P = {"year": year}
+    tot = u["total_price_paid"].sum()
+    for k, g in u.groupby("cls"):
+        dig = g["digit"].value_counts(normalize=True).sort_index()
+        cell = g[g["store_code_uc"].fillna(0) != 0].groupby(
+            ["store_code_uc", "upc", "week_end"])
+        agg = cell.agg(nh=("household_code", "nunique"),
+                       lo=("cents", "min"), hi=("cents", "max"))
+        agg = agg[agg["nh"] >= 2]
+        P[k] = {"rows": int(len(g)),
+                "dollar_share": share(g["total_price_paid"].sum(), tot),
+                "store_code_share": float((g["store_code_uc"].fillna(0)
+                                           != 0).mean()),
+                "digit_dist": {int(i): float(v) for i, v in dig.items()},
+                "top_digit_share": float(dig.max()),
+                "multi_hh_cells": int(len(agg)),
+                "same_price_share": (float((agg["lo"] == agg["hi"]).mean())
+                                     if len(agg) else None)}
+        print(k, {a: b for a, b in P[k].items() if a != "digit_dist"},
+              flush=True)
+    (outdir / f"probe_{year}.json").write_text(json.dumps(P, indent=1,
+                                                          default=float))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("stage", choices=["hs", "match"])
+    ap.add_argument("stage", choices=["hs", "match", "probe"])
     ap.add_argument("--outdir", required=True, type=Path)
     ap.add_argument("--year", type=int, default=2014)
     a = ap.parse_args()
     a.outdir.mkdir(parents=True, exist_ok=True)
     if a.stage == "hs":
         stage_hs(a.outdir)
-    else:
+    elif a.stage == "match":
         stage_match(a.outdir, a.year)
+    else:
+        stage_probe(a.outdir, a.year)
 
 
 if __name__ == "__main__":

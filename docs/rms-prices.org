@@ -3,128 +3,180 @@
 
 Requested by EL after D4 and the theta-gap check (2026-10-19): "For
 prices: what are the differences?  Do they depend on coupons, reporting,
-...?  Are there important differences in the two price sources?"  This
-note answers from the Kilts manuals (sections 1-5, documented facts with
-page citations) and from direct measurements on the Homescan purchase
-records and the RMS movement (section 6, =src/rms_prices.py=).  Section 7
-is interpretation and is marked as such.
-
-Measurements: PENDING (this draft holds the documented facts only).
+...?  Are there important differences in the two price sources?"  Sections
+1-5 are documented facts, with page citations.  Section 6 is measurement
+(=src/rms_prices.py=).  Sections 7 and 8 are interpretation and open
+questions, and say so.  No retailer is named; "the largest outside chain"
+is the biggest Homescan cereal retailer that does not report to Kilts RMS.
 
 Sources and how they are cited:
 - CP: /Kilts NielsenIQ Consumer Panel Dataset Manual/, 2004-2024 edition
   (Kilts =Reference_Documentation.tgz=, consumer-panel bundle).  Its
-  "Batch 1 (2004-2020)" layouts and the "Universal" sections cover the
-  classic years; page numbers are the manual's own.
+  "Universal" sections and "Batch 1 (2004-2020)" layouts cover the classic
+  years.  Page numbers are the manual's own.
 - RMS: /Kilts NielsenIQ Retail Scanner Dataset Manual/ 2006-2020, updated
   04/15/2022 (scanner bundle).  The 2021-onward manual (2024 edition)
-  repeats every passage cited here word for word (its pp. 6-7, 16-17).
+  repeats the movement-file notes cited here (its pp. 6-7, 16-17).
 - ELN: Einav, Leibtag and Nevo, "Recording discrepancies in Nielsen
   Homescan data: Are they present and do they matter?", /Quantitative
-  Marketing and Economics/ 8(2), 2010.  Cited by the page of its working
+  Marketing and Economics/ 8(2), 2010.  Pages cited are from the working
   paper version, NBER WP 14436 (2008), "Not-so-classical measurement
   errors: a validation study of Homescan".
 - AUDIT-2022: the 2022 trips <-> RMS-stores linkage audit
   (=sue-scratch/rms_audit/AUDIT-2022.org=, 2026-08-11).
-- AM:<line> cites =src/aggregate_markets.py= (the panel builder).
+- AM:<line> cites =src/aggregate_markets.py= (the panel builder).  "D4"
+  is =docs/rms-validation.org=.
+
+* 0. Short answer
+
+Most important first.  Measured unless marked otherwise.
+
+1. *Coverage is the main difference.*  Only 46.6% of the panel's
+   2006-2024 cereal dollars are spent at retailers that report to RMS
+   (42.9% of all module-1344 dollars).  At those retailers Homescan and RMS
+   prices agree in level: mean d = log p_RMS - log p_HS = 0.001, against
+   D4's 0.052.  Purchases elsewhere cost 0.093 log points less on the same
+   cells.  So D4's gap is entirely the uncovered half of Homescan.
+   Across the 45 brands, the D4 gap correlates -0.61 with the brand's
+   covered share of dollars.  Restricted to covered retailers, the brand
+   gaps shrink from 0.010-0.111 to -0.029-0.050.
+2. *Coverage also explains much of the low two-way correlation.*  Net of
+   product and (t, m) effects, the correlation with RMS is 0.474 for
+   covered-only Homescan cells and 0.225 for uncovered-only cells, on the
+   same 182,833 cells.  The full panel gives 0.446 on those cells, and a
+   random split of trips the size of the covered half gives 0.358.  For
+   cells with at least 25 transactions, covered cells reach 0.68-0.70 and
+   placebo cells 0.36-0.45.  Uncovered cells peak at 10-24 transactions
+   and then fall as they get thicker (0.28, 0.23, 0.17, 0.12).  Correlation that falls with more data is not
+   sampling noise: those stores price differently, and RMS does not see
+   them.
+3. *Where a store reports, the two sources record the same price.*
+   Documented: at stores whose POS data NielsenIQ receives, the Homescan
+   price is not what the panelist paid.  It is the store's volume-weighted
+   average price for that UPC that week, the same object as the RMS price
+   (CP pp. 9, 20; RMS pp. 15-16; ELN pp. 2, 4).  Measured: on (store, UPC,
+   week) matches, the Homescan unit price equals RMS price / prmult to the
+   cent for 86.7% of records in 2008, 78.0% in 2014 and 70.2% in 2022.
+4. *Even at reporting stores, Homescan cells add variation RMS lacks:
+   which weeks, stores and UPCs the few sample households bought.*  In
+   2014, pricing the panel's store-linked purchases at the exact RMS
+   store-week price moves the two-way correlation with RMS only from 0.35
+   to 0.37.  Pricing them at the RMS store-quarter average for the same
+   UPC raises it to 0.55; the rest is store and UPC mix.  2008 and 2022
+   show the same pattern.
+5. *Coupons are not a difference as the panels stand.*  Both prices are
+   gross of manufacturer coupons (documented): the panel uses
+   =total_price_paid=, which is before coupons, and RMS excludes
+   manufacturer coupons.  Coupons are 6.2% of gross Homescan dollars,
+   ranging from 1.9% to 9.5% by brand.  Netting them out of Homescan moves
+   it away from RMS: the gap rises to 0.106 and the two-way correlation
+   falls to 0.378 (0.403 on covered cells).  So coupons would add
+   within-(t, m) relative-price variation that RMS lacks, but only if
+   someone netted them, and the panel does not.
+6. *Deal flags do not matter for agreement.*  =deal_flag_uc= marks a deal
+   as the panelist perceived it; 41.4% of dollars carry one.  Keeping only
+   non-deal purchases lowers the two-way correlation (0.352).
+7. *Loyalty cards affect both sources the same way at covered stores*
+   (documented; ELN).  The weekly average mixes card and non-card buyers,
+   so both sources overstate what a card-holder paid.  This does not
+   create disagreement between the two sources.
 
 * 1. The two price concepts (documented)
 
-What each file's =prices= is (D4 section 2): revenue / ounces per (t, m, j).
+Both files' =prices= are revenue / ounces per (t, m, j) (D4 section 2).
 
 - Homescan (the panel): revenue = sum of =total_price_paid= over the
   sample households' purchase records (AM:636-645), unprojected.
-  =total_price_paid= is "Total price paid for all units, before discounts";
-  =coupon_value= is "Total discount for amount due to coupon"; "To calculate
-  the final price paid by panelist, subtract =coupon_value= from
-  =total_price_paid=" (CP p. 27, Purchases file, and Note 1; the same for
-  2021+ on pp. 40-41; FAQ 24, p. 62).  The panel uses =total_price_paid=
-  as is, so its price is *gross of coupons*.
+  =total_price_paid= is "Total price paid for all units, before
+  discounts".  =coupon_value= is "Total discount for amount due to
+  coupon".  "To calculate the final price paid by panelist, subtract
+  =coupon_value= from =total_price_paid=" (CP p. 27, Purchases file and
+  Note 1; the same for 2021+ on pp. 40-41; FAQ 24, p. 62).  The panel uses
+  =total_price_paid= as is, so its price is *gross of coupons*.
 - RMS: revenue = sum over store-weeks of units x price / prmult.  =price=
   is "The volume weighted average price of the product for that week"
-  (RMS p. 15); "NielsenIQ uses the volume weighted price of all sales for
-  that good in that week" (RMS p. 16, note G).  So it is a weekly average
-  over transactions, not the modal or the shelf price.  Multi-unit deals:
-  "3 for $1" is prmult = 3, price = $1.00; "The unit price would be
-  price/prmult" (RMS p. 6 and p. 16, note E).  Sales tax is typically not
-  included (note H).  Zero prices are not allowed: free goods are coded
-  1 cent (p. 17, note N).
-- What the RMS weekly price includes (RMS p. 16, note F): "Retailer
-  discounts and specials (e.g. discounts associated with the use of a
-  retailer's loyalty card or coupons) are factored into the weighted
-  average weekly price.  Manufacturer coupons are not factored into the
-  weighted average weekly price."
-- RMS values can be edited by NielsenIQ: in under ~1% of cases prices are
-  changed (about a quarter of those are outliers re-imputed from history,
-  three quarters are unit-basis alignments); under ~3% of store-weeks are
-  wholly imputed; no flag marks them (RMS p. 16, note D).
-
-So at the level of one transaction both sources are, by construction,
-*after* in-store and loyalty-card reductions and *before* manufacturer
-coupons, *where the Homescan price comes from store data* (section 5).
-Where the panelist types the price, the instruction is to "enter the price
-paid (prior to any coupons or deals)" (CP p. 20; FAQ 21, p. 62); whether
-"deals" there means shelf price before a temporary reduction, or only
-before a coupon-like deduction at the register, the manual does not say.
+  (RMS p. 15).  "NielsenIQ uses the volume weighted price of all sales for
+  that good in that week" (p. 16, note G).  It is a weekly average over
+  transactions, not the modal price or the shelf price.  Multi-unit deals:
+  "3 for $1" is prmult = 3, price = $1.00, and "The unit price would be
+  price/prmult" (p. 6; p. 16, note E).  Sales tax is typically excluded
+  (note H).  Free goods are coded at 1 cent, because zero prices are not
+  allowed (pp. 17-18, note N).
+- What the RMS price includes (RMS p. 16, note F): "Retailer discounts
+  and specials (e.g. discounts associated with the use of a retailer's
+  loyalty card or coupons) are factored into the weighted average weekly
+  price.  Manufacturer coupons are not factored into the weighted average
+  weekly price."
+- NielsenIQ edits RMS: prices are changed in under ~1% of cases (a
+  quarter of those are outliers re-imputed from history, three quarters
+  are unit-basis alignments).  Under ~3% of store-weeks are wholly
+  imputed.  No flag marks either (RMS p. 16, note D).
+- Panelist-typed prices: the instruction is to "enter the price paid
+  (prior to any coupons or deals)" (CP p. 20; FAQ 21, p. 62).  The manual
+  does not say whether "deals" means the shelf price before a temporary
+  reduction, or only before a deduction at the register.
 
 * 2. Coupons (documented)
 
 - Homescan records the panelist's coupon as =coupon_value=, a dollar
-  discount on the record (CP p. 9, item 2d; p. 21; p. 27).  The manual does
-  not say whether it covers manufacturer coupons only or also retailer
-  coupons; it is what the panelist enters.
+  discount on the record (CP p. 9, item 2d; p. 21; p. 27).  The manual
+  does not say whether it covers only manufacturer coupons or retailer
+  coupons too.
 - RMS has no coupon field.  Retailer coupons are inside the weekly price;
   manufacturer coupons are not (RMS p. 16, note F).
-- So both panel prices, as built, are gross of manufacturer coupons:
-  the panel's =prices= does not subtract =coupon_value=.  Netting coupons
-  out of Homescan would move it away from RMS's concept, not toward it,
-  unless =coupon_value= is mostly retailer coupons (which RMS nets).
-- ELN (p. 15, fn. 14): their price regressions (who pays less for the
-  same item) come out "qualitatively similar" with prices net of coupons.
+- Both panels, as built, are therefore gross of manufacturer coupons.
+  Netting coupons out of Homescan would move it away from RMS's concept,
+  unless =coupon_value= is mostly retailer coupons, which RMS already
+  nets.
+- ELN (p. 15, fn. 14): their price regressions (who pays less for the same
+  item) are "qualitatively similar" with prices net of coupons.
 
 * 3. Deals (documented)
 
 - Homescan: =deal_flag_uc= = 1 if "the item was perceived by the consumer
-  to be on a 'deal'" (CP p. 9, item 2c; p. 21; layout p. 27).  It is the
-  panelist's perception, not a price fact.  Loyalty-card discounts: "If
-  the panelist has a frequent shopper card and is aware that a particular
-  item was discounted for card members, they can indicate this as a deal
-  but are not required to do so" (CP p. 21).  A zero =total_price_paid=
-  with a deal flag is a valid "free goods" price; without one Nielsen
+  to be on a 'deal'" (CP p. 9, item 2c; p. 21; layout p. 27).  It records
+  the panelist's perception, not a price fact.  On loyalty cards: "If the
+  panelist has a frequent shopper card and is aware that a particular item
+  was discounted for card members, they can indicate this as a deal but
+  are not required to do so" (CP p. 21).  A zero =total_price_paid= with
+  a deal flag is a valid "free goods" price; without a flag, NielsenIQ
   advises treating it as missing (FAQ 22, p. 62).
-- RMS: no deal flag.  Feature and display flags exist for an "audited"
-  subset of stores only (RMS pp. 6, 16-17, notes J-L); there is no TPR
-  indicator (note M).  Multi-unit deals are coded through prmult (note E).
+- RMS has no deal flag.  Feature and display flags exist only for an
+  "audited" subset of stores (RMS pp. 6, 16-17, notes J-L), and there is
+  no temporary-price-reduction indicator (note M).  Multi-unit deals are
+  coded through prmult (note E).
 
 * 4. Coverage and the store link (documented)
 
 - Homescan covers purchases "from any outlet" (CP p. 9).  RMS covers only
-  the stores of retailers that agreed to share with Kilts: "not every
-  NielsenIQ retail cooperator has agreed to share their scanner data with
-  the Kilts Center" (RMS p. 7).  So there are three kinds of store, not
-  two: (i) in Kilts RMS; (ii) NielsenIQ POS cooperators that do not share
-  with Kilts; (iii) stores NielsenIQ has no POS data for.
-- Trips carry both =retailer_code= (the chain, banner level) and
-  =store_code_uc= ("ID code for each individual store.  This
+  the stores of retailers that share with Kilts: "not every NielsenIQ
+  retail cooperator has agreed to share their scanner data with the Kilts
+  Center" (RMS p. 7).  So there are three kinds of store, not two:
+  1. stores in Kilts RMS;
+  2. NielsenIQ POS cooperators that do not share with Kilts;
+  3. stores NielsenIQ has no POS data for.
+- Question (d) of the request: trips carry both =retailer_code= (the
+  chain, at banner level; CP p. 25) and =store_code_uc=.  The manual
+  describes =store_code_uc= as "ID code for each individual store.  This
   store_code_uc can be used to link consumer panel data with the retail
-  scanner data.  Note that a value of zero represents 'missing'", CP
-  pp. 25-26; also p. 9).  "Store code and store zip are provided only for a
-  subset of trips" (CP p. 9).
-- RMS =stores= carry =retailer_code= "inferred from the Consumer Panel
-  Dataset" (RMS p. 8); it "is the same as the retailer_code field in the
-  Consumer Panel dataset" and is blank for a store with no panel
-  transactions (RMS pp. 10-11, notes A, C).  In the classic years 42% of
-  store-years have no retailer_code for that reason (RMS p. 23).
+  scanner data.  Note that a value of zero represents 'missing'" (CP
+  p. 26; also p. 9; RMS p. 10, note A).  "Store code and store zip are
+  provided only for a subset of trips" (CP p. 9).
+- RMS =stores= carry a =retailer_code= "inferred from the Consumer Panel
+  Dataset" (RMS p. 8).  It "is the same as the retailer_code field in the
+  Consumer Panel dataset", and it is blank for a store with no panel
+  transactions (RMS pp. 10-11, notes A and C).  In the classic years, 42%
+  of store-years have no retailer_code for that reason (RMS p. 23).
 - AUDIT-2022 (2022 only): 83.6% of Homescan cereal dollars are on trips
-  with a store code; 38.4% are at an RMS-2022 store by store code; 42.8%
-  at an RMS retailer_code; the single largest uncovered chain is 21.1%;
-  138 of RMS's 144 chains appear in the trips.  Trips' store codes exist
-  essentially only for NielsenIQ-scanned stores, so "has a store code" is
-  close to "NielsenIQ has POS data for this store".
+  with a store code.  38.4% are at an RMS-2022 store by store code, and
+  42.8% at an RMS retailer_code.  The single largest uncovered chain is
+  21.1%.  138 of RMS's 144 chains appear in the trips.  Section 6.2
+  reproduces the 38.4% and 42.8% exactly.
 
 * 5. Homescan prices imputed from store data (documented)
 
-This is the point that decides whether the sources share a price concept.
+This is the point that decides whether the two sources share a price
+concept.
 
 - CP p. 9 (data entry sequence): "Price - entered only if the product was
   purchased at a store that doesn't provide NielsenIQ with retail scanner
@@ -132,35 +184,425 @@ This is the point that decides whether the sources share a price concept.
 - CP p. 20 (Price Determination): "if the outlet shopped is a retailer for
   which NielsenIQ receives electronic point of sale (POS) data, the price
   prompt is bypassed.  In this case, the price reported is an average
-  weighted price for the item that week in that particular store."  Also:
-  "For certain harder to recruit-maintain demographics, panelists are not
-  required to enter prices for any retailers.  These prices are then
-  imputed using POS data as well as other sources of data (prices ranges,
-  median prices from other panelists etc)."  And: "NielsenIQ does not
-  distinguish prices entered by the panelist from those that are imputed".
-  Repeated in FAQ 21 (pp. 61-62).
+  weighted price for the item that week in that particular store."  It
+  goes on: "For certain harder to recruit-maintain demographics, panelists
+  are not required to enter prices for any retailers.  These prices are
+  then imputed using POS data as well as other sources of data (prices
+  ranges, median prices from other panelists etc)", and "NielsenIQ does
+  not distinguish prices entered by the panelist from those that are
+  imputed".  FAQ 21 (pp. 61-62) repeats this.
 - RMS p. 15 (note B) and p. 16 (note C): "In most cases for panel data,
   panelists do not enter prices for retailers for which NielsenIQ receives
   scanner data.  Prices are ascribed from the scanner data for the
   specific store a panelist shopped in the reported week.  As such, prices
-  should generally be consistent for scanning data and panel data";
-  exceptions are retailers where NielsenIQ does not ascribe (panelists
-  enter prices) and late transmissions, where "the imputed price is based
-  on the following week's scanning data".
-- ELN (pp. 4, 11-12), validating 2004 Homescan against one retailer's
-  transaction records: "when available, Nielsen uses store-level (average)
-  prices instead of the actual price paid by the household".  The two
-  prices disagree in about half the cases; their correlation is 0.88; the
-  error is 21.8% of the variance of the Homescan price (8.5% where no
-  loyalty-card discount was offered, correlation 0.96).  Where a card
-  discount applied, Homescan over-reports the card-holder's price (mean
-  error over 14%), because the imputed weekly average mixes card and
-  non-card buyers (p. 11).  Card use: 75-80% of transactions; about 60% of
-  transacted items carried a card discount at that retailer (p. 11).
+  should generally be consistent for scanning data and panel data."  There
+  are two exceptions: retailers where NielsenIQ does not ascribe (the
+  panelists enter prices), and late transmissions, where "the imputed
+  price is based on the following week's scanning data".  Note B also
+  warns that a retailer's 7-day week need not end on Saturday.
+- ELN validated 2004 Homescan against one retailer's transaction records.
+  They write: "when available, Nielsen uses store-level (average) prices
+  instead of the actual price paid by the household" (p. 2; mechanism
+  p. 4).  The two prices disagree in about half the cases, with
+  correlation 0.88; the error is 21.8% of the variance of the Homescan
+  price.  Where no loyalty-card discount was offered, the error is 8.5% of
+  the variance and the correlation is 0.96.  Where a card discount
+  applied, Homescan overstates the card-holder's price (mean error above
+  14%), because the weekly average mixes card and non-card buyers
+  (pp. 11-12).  At that retailer, cards were used in 75-80% of
+  transactions, and about 60% of transacted items carried a card discount
+  (p. 11).
 
 Consequence (documented): at a store whose POS data NielsenIQ receives,
-the Homescan price for a UPC-week is the same object as the RMS price for
-that store-UPC-week, the store's weekly volume-weighted average, not what
-the household paid.  This holds for every NielsenIQ POS store, including
-those of chains that do not share with Kilts, so "outside RMS" is not
-"panelist-entered".  Section 6.5 checks it record by record.
+the Homescan price for a store-UPC-week is the RMS price for that
+store-UPC-week, not what the household paid.  This holds for every
+NielsenIQ POS store, including those of chains that do not share with
+Kilts.  So "outside RMS" does not mean "typed by the panelist".
+
+* 6. Measurements
+
+** 6.1 Method
+
+=src/rms_prices.py hs= rebuilds the panel's (t, m, j) cells from the raw
+purchase records with the panel builder's own helpers (AM imports: trips
+on (trip_code_uc, panel_year), household DMA, quarter of purchase date,
+CTL* dropped, 2021+ brand crosswalk, OZ only, the panel's 45 j and 65 m).
+Check: the all-purchases rebuild reproduces =market_panel.parquet=
+exactly.  It has the same 214,637 cells, a maximum relative price
+difference of 0.0, and identical =n_transactions=.
+
+Each purchase is then tagged by the RMS stores with module-1344 movement
+in its calendar year (=diagnostics/stores_by_year=):
+- /RMS store/: the trip's =store_code_uc= is one of those stores;
+- /covered/: the trip's =retailer_code= is a chain of one of those stores
+  (every store-linked purchase is also covered).
+
+Cells are then re-aggregated from subsets of purchases, or with
+=coupon_value= netted out.  Each set of cells is compared with
+=market_panel_rms.parquet= using D4 section 2's statistics:
+- corr of log p, pooled, within (t, m), and two-way (net of product and
+  (t, m) fixed effects, alternating projections over that variant's own
+  common cells);
+- sd of the two-way residuals;
+- d = log p_RMS - log p_HS.
+
+/Placebo/ is a seeded random 46.6% of trips, the covered share of
+dollars, with its complement, so that thinning is separated from coverage.
+
+** 6.2 Coverage, coupons and deals by year (Homescan dollars, %)
+
+"1344 $" is every module-1344 purchase that merged to a trip (all brands,
+private label included, all DMAs).  "Panel $" is the panel universe (45
+brands, 65 DMAs, OZ).  Coupon and deal columns are panel universe.
+Covered and uncovered split the column to their left.
+
+| year | 1344 $ RMS store | 1344 $ RMS chain | panel $ RMS chain | coupon/gross | covered | uncovered | $ w/ coupon | deal $ | covered | uncovered |
+|-|-|-|-|-|-|-|-|-|-|-|
+| 2006 | 32.5 | 45.9 | 49.1 | 4.4 | 5.5 | 3.3 | 14.5 | 45.4 | 59.4 | 31.9 |
+| 2007 | 34.6 | 44.0 | 48.0 | 5.6 | 7.3 | 4.1 | 16.5 | 40.4 | 53.1 | 28.6 |
+| 2008 | 34.6 | 44.2 | 48.6 | 6.5 | 8.3 | 4.7 | 18.3 | 41.8 | 54.7 | 29.6 |
+| 2009 | 35.1 | 43.6 | 47.7 | 8.0 | 10.1 | 6.1 | 22.8 | 44.6 | 57.4 | 33.0 |
+| 2010 | 35.7 | 43.4 | 47.5 | 8.0 | 9.9 | 6.4 | 25.0 | 46.8 | 58.0 | 36.7 |
+| 2011 | 35.7 | 43.8 | 47.6 | 8.2 | 9.9 | 6.6 | 26.3 | 46.9 | 57.5 | 37.3 |
+| 2012 | 35.4 | 43.7 | 48.0 | 7.9 | 9.9 | 6.1 | 26.6 | 47.5 | 57.8 | 38.1 |
+| 2013 | 36.1 | 41.7 | 45.5 | 7.6 | 9.1 | 6.3 | 25.4 | 47.0 | 56.9 | 38.7 |
+| 2014 | 34.0 | 43.7 | 44.0 | 7.3 | 8.8 | 6.2 | 24.2 | 45.4 | 55.7 | 37.3 |
+| 2015 | 33.0 | 38.8 | 42.2 | 6.5 | 7.8 | 5.6 | 21.6 | 42.8 | 53.3 | 35.2 |
+| 2016 | 31.1 | 37.5 | 40.8 | 6.3 | 7.3 | 5.6 | 21.8 | 42.0 | 50.8 | 36.0 |
+| 2017 | 29.8 | 35.1 | 38.7 | 5.8 | 7.4 | 4.9 | 20.3 | 41.0 | 52.3 | 33.8 |
+| 2018 | 38.7 | 44.6 | 49.5 | 5.7 | 7.3 | 4.0 | 17.5 | 39.4 | 51.5 | 27.5 |
+| 2019 | 38.7 | 46.5 | 48.4 | 5.1 | 6.4 | 3.9 | 15.7 | 37.9 | 49.1 | 27.4 |
+| 2020 | 38.4 | 45.8 | 47.3 | 4.3 | 5.5 | 3.3 | 13.7 | 33.8 | 44.5 | 24.3 |
+| 2021 | 39.5 | 46.3 | 48.6 | 4.7 | 6.7 | 2.8 | 14.2 | 34.8 | 47.1 | 23.2 |
+| 2022 | 38.4 | 42.8 | 47.2 | 4.1 | 5.8 | 2.6 | 12.3 | 32.9 | 45.0 | 22.0 |
+| 2023 | 36.9 | 43.2 | 49.8 | 4.0 | 6.1 | 1.9 | 11.8 | 32.8 | 46.5 | 19.2 |
+| 2024 | 36.1 | 42.4 | 49.5 | 4.1 | 6.4 | 1.9 | 11.3 | 32.7 | 45.9 | 19.8 |
+| 2006-2024 | 35.4 | 42.9 | 46.6 | 6.2 | 7.9 | 4.8 | 19.6 | 41.4 | 52.9 | 31.3 |
+
+- 2022 reproduces AUDIT-2022 (38.4% store, 42.8% chain).
+- Coupons are brand-specific (section 6.4), so they vary within
+  (t, m).  Per cell, the sd of log(1 - coupon/gross) is 0.092, and 0.088
+  net of product and (t, m) effects.  For comparison, the panel's two-way
+  log-price residual has sd 0.128.
+
+** 6.3 The D4 comparison split by coverage
+
+Each variant on its own common cells with RMS:
+
+| Homescan cells from | cells | median n_trans | corr log p | within (t,m) | two-way | sd 2w HS | sd 2w RMS | mean d | sd d |
+|-|-|-|-|-|-|-|-|-|-|
+| all purchases (= the panel, D4) | 214,395 | 17 | 0.852 | 0.834 | 0.399 | 0.128 | 0.100 | 0.052 | 0.139 |
+| all, net of coupons | 214,372 | 17 | 0.821 | 0.792 | 0.378 | 0.151 | 0.100 | 0.106 | 0.157 |
+| covered (RMS chain) | 194,937 | 8 | 0.827 | 0.795 | 0.466 | 0.171 | 0.098 | 0.001 | 0.160 |
+| covered, net of coupons | 194,772 | 8 | 0.747 | 0.700 | 0.403 | 0.218 | 0.098 | 0.075 | 0.209 |
+| uncovered | 205,963 | 9 | 0.770 | 0.753 | 0.221 | 0.148 | 0.100 | 0.093 | 0.179 |
+| RMS store (store-code link) | 185,327 | 7 | 0.822 | 0.785 | 0.479 | 0.174 | 0.098 | -0.002 | 0.162 |
+| RMS chain, other store | 105,656 | 2 | 0.617 | 0.605 | 0.193 | 0.249 | 0.093 | -0.010 | 0.271 |
+| placebo: random 46.6% of trips | 206,917 | 8 | 0.811 | 0.784 | 0.335 | 0.153 | 0.100 | 0.050 | 0.163 |
+| placebo complement (53.4%) | 208,892 | 9 | 0.819 | 0.793 | 0.345 | 0.148 | 0.100 | 0.051 | 0.158 |
+| deal flag 0 only | 211,264 | 11 | 0.832 | 0.812 | 0.352 | 0.136 | 0.100 | 0.046 | 0.149 |
+| deal flag 1 only | 189,516 | 7 | 0.754 | 0.712 | 0.293 | 0.187 | 0.098 | 0.053 | 0.199 |
+
+"RMS chain, other store" (median 2 transactions per cell) is too thin to
+show anything about chain-level vs store-level linking.
+
+The same 182,833 cells for every row (cells present in covered,
+uncovered, placebo, complement and RMS):
+
+| Homescan cells from | cells | median n_trans | corr log p | within (t,m) | two-way | sd 2w HS | sd 2w RMS | mean d | sd d |
+|-|-|-|-|-|-|-|-|-|-|
+| all purchases (= the panel) | 182,833 | 21 | 0.870 | 0.855 | 0.446 | 0.114 | 0.097 | 0.050 | 0.125 |
+| all, net of coupons | 182,833 | 21 | 0.850 | 0.825 | 0.432 | 0.131 | 0.097 | 0.107 | 0.137 |
+| covered (RMS chain) | 182,833 | 9 | 0.832 | 0.801 | 0.474 | 0.166 | 0.097 | 0.000 | 0.155 |
+| covered, net of coupons | 182,697 | 9 | 0.755 | 0.708 | 0.411 | 0.211 | 0.097 | 0.075 | 0.202 |
+| uncovered | 182,833 | 10 | 0.770 | 0.752 | 0.225 | 0.143 | 0.097 | 0.094 | 0.174 |
+| placebo: random 46.6% of trips | 182,833 | 10 | 0.822 | 0.796 | 0.358 | 0.143 | 0.097 | 0.049 | 0.153 |
+| placebo complement (53.4%) | 182,833 | 11 | 0.832 | 0.807 | 0.371 | 0.138 | 0.097 | 0.050 | 0.147 |
+
+Covered minus uncovered Homescan log price, same cells: 0.093.
+
+Two-way correlation by the Homescan cell's =n_transactions= (each
+variant's own common cells; cells in parentheses):
+
+| variant | 1-9 | 10-24 | 25-49 | 50-99 | 100+ |
+|-|-|-|-|-|-|
+| all purchases (= the panel) | 0.325 (64,770) | 0.442 (70,348) | 0.492 (43,119) | 0.505 (24,407) | 0.434 (11,751) |
+| covered (RMS chain) | 0.404 (106,606) | 0.603 (52,373) | 0.678 (23,155) | 0.697 (9,565) | 0.681 (3,238) |
+| uncovered | 0.204 (105,215) | 0.276 (61,770) | 0.230 (25,333) | 0.165 (10,441) | 0.124 (3,204) |
+| placebo: random 46.6% of trips | 0.300 (113,586) | 0.424 (59,546) | 0.452 (23,200) | 0.408 (8,308) | 0.364 (2,277) |
+| placebo complement (53.4%) | 0.304 (105,280) | 0.429 (63,239) | 0.461 (26,881) | 0.420 (10,159) | 0.369 (3,333) |
+| RMS store (store-code link) | 0.424 (107,455) | 0.631 (47,792) | 0.676 (20,118) | 0.691 (7,778) | 0.598 (2,184) |
+| covered, net of coupons | 0.342 (106,441) | 0.554 (52,373) | 0.635 (23,155) | 0.646 (9,565) | 0.638 (3,238) |
+| all, net of coupons | 0.298 (64,747) | 0.431 (70,348) | 0.484 (43,119) | 0.499 (24,407) | 0.444 (11,751) |
+
+By year, two-way correlation / mean d:
+
+| year | all (panel) | covered | uncovered | placebo | covered net |
+|-|-|-|-|-|-|
+| 2006 | 0.51 / 0.061 | 0.51 / 0.015 | 0.38 / 0.103 | 0.45 / 0.059 | 0.47 / 0.068 |
+| 2007 | 0.61 / 0.061 | 0.62 / 0.003 | 0.44 / 0.112 | 0.53 / 0.061 | 0.55 / 0.072 |
+| 2008 | 0.50 / 0.061 | 0.53 / 0.000 | 0.33 / 0.109 | 0.43 / 0.062 | 0.45 / 0.078 |
+| 2009 | 0.44 / 0.051 | 0.47 / -0.007 | 0.29 / 0.099 | 0.36 / 0.050 | 0.41 / 0.089 |
+| 2010 | 0.43 / 0.040 | 0.46 / -0.009 | 0.25 / 0.081 | 0.37 / 0.037 | 0.39 / 0.090 |
+| 2011 | 0.46 / 0.051 | 0.51 / -0.005 | 0.24 / 0.098 | 0.38 / 0.051 | 0.43 / 0.092 |
+| 2012 | 0.36 / 0.058 | 0.48 / 0.011 | 0.15 / 0.097 | 0.30 / 0.059 | 0.41 / 0.110 |
+| 2013 | 0.35 / 0.051 | 0.44 / 0.007 | 0.14 / 0.087 | 0.29 / 0.050 | 0.33 / 0.101 |
+| 2014 | 0.23 / 0.058 | 0.37 / 0.005 | 0.07 / 0.096 | 0.19 / 0.057 | 0.32 / 0.091 |
+| 2015 | 0.25 / 0.054 | 0.43 / 0.003 | 0.06 / 0.087 | 0.21 / 0.052 | 0.36 / 0.082 |
+| 2016 | 0.30 / 0.058 | 0.43 / 0.011 | 0.11 / 0.089 | 0.25 / 0.057 | 0.36 / 0.077 |
+| 2017 | 0.21 / 0.052 | 0.39 / 0.006 | 0.05 / 0.084 | 0.17 / 0.052 | 0.36 / 0.074 |
+| 2018 | 0.34 / 0.054 | 0.46 / 0.012 | 0.08 / 0.090 | 0.30 / 0.055 | 0.45 / 0.077 |
+| 2019 | 0.36 / 0.067 | 0.43 / 0.026 | 0.10 / 0.105 | 0.30 / 0.065 | 0.41 / 0.084 |
+| 2020 | 0.36 / 0.043 | 0.47 / -0.009 | 0.18 / 0.092 | 0.31 / 0.041 | 0.44 / 0.039 |
+| 2021 | 0.31 / 0.033 | 0.40 / -0.024 | 0.18 / 0.085 | 0.26 / 0.030 | 0.34 / 0.040 |
+| 2022 | 0.41 / 0.040 | 0.46 / -0.021 | 0.29 / 0.090 | 0.35 / 0.035 | 0.40 / 0.036 |
+| 2023 | 0.41 / 0.043 | 0.45 / -0.016 | 0.27 / 0.092 | 0.35 / 0.038 | 0.38 / 0.042 |
+| 2024 | 0.49 / 0.042 | 0.49 / 0.010 | 0.34 / 0.063 | 0.40 / 0.039 | 0.42 / 0.070 |
+
+D4's weakest years, 2014-2017 (two-way 0.21-0.30), include the three
+years with the lowest RMS coverage (2015-2017, 35-39% of module-1344
+dollars).  In 2014-2017, uncovered cells correlate 0.05-0.11, while
+covered cells stay at 0.37-0.43.
+
+** 6.4 By brand
+
+Shares are of the brand's 2006-2024 panel dollars.  Mean d is over each
+variant's common cells; the D4 column reproduces D4 section 4.
+
+| j | brand_descr | coupon/gross % | deal $ % | covered $ % | mean d (D4) | mean d covered | mean d uncovered |
+|-|-|-|-|-|-|-|-|
+| 579824 | KEL APPLE JACKS | 6.3 | 44.2 | 50.7 | 0.010 | -0.029 | 0.035 |
+| 623841 | QKR CINNAMON LIFE | 5.3 | 51.3 | 58.5 | 0.014 | -0.009 | 0.047 |
+| 557517 | G M LUCKY CHARMS | 6.9 | 44.1 | 49.2 | 0.017 | -0.008 | 0.037 |
+| 557579 | G M TRIX | 9.5 | 52.6 | 57.0 | 0.017 | -0.004 | 0.048 |
+| 557434 | G M COCOA PUFFS | 7.4 | 46.1 | 52.7 | 0.020 | -0.009 | 0.057 |
+| 557501 | G M HONEY NUT CHEERIOS | 6.8 | 41.5 | 44.9 | 0.027 | -0.007 | 0.043 |
+| 557491 | G M GOLDEN GRAHAMS | 8.0 | 50.7 | 55.2 | 0.028 | 0.003 | 0.059 |
+| 579905 | KEL FROOT LOOPS | 5.8 | 40.8 | 48.9 | 0.029 | -0.026 | 0.071 |
+| 580037 | KEL SPECIAL K VANILLA ALMOND | 6.3 | 45.3 | 47.1 | 0.030 | 0.018 | 0.046 |
+| 579870 | KEL CORN POPS | 6.3 | 44.7 | 52.2 | 0.031 | -0.020 | 0.073 |
+| 557396 | G M CHEERIOS | 8.0 | 44.5 | 45.8 | 0.031 | -0.009 | 0.059 |
+| 623870 | QKR LIFE | 4.5 | 40.8 | 50.4 | 0.031 | -0.017 | 0.074 |
+| 557548 | G M REESE'S PUFFS | 6.5 | 42.9 | 49.0 | 0.033 | -0.011 | 0.074 |
+| 580025 | KEL SPECIAL K | 5.5 | 39.2 | 48.0 | 0.034 | -0.004 | 0.071 |
+| 580031 | KEL SPECIAL K FRUIT & YOGURT | 6.6 | 44.9 | 50.5 | 0.037 | 0.014 | 0.064 |
+| 557461 | G M FIBER ONE | 6.2 | 43.1 | 49.9 | 0.037 | 0.033 | 0.046 |
+| 580002 | KEL RICE KRISPIES | 6.2 | 40.9 | 51.5 | 0.037 | -0.010 | 0.090 |
+| 623809 | QKR CAP'N CRN | 4.0 | 38.4 | 51.4 | 0.038 | -0.005 | 0.078 |
+| 557523 | G M MULTIGRAIN CHEERIOS | 8.3 | 46.8 | 45.7 | 0.041 | -0.011 | 0.084 |
+| 620537 | POST RAISIN BRAN | 5.8 | 41.1 | 50.7 | 0.044 | -0.008 | 0.087 |
+| 620554 | POST SELECTS GREAT GRAINS | 4.2 | 38.4 | 43.3 | 0.049 | 0.015 | 0.080 |
+| 557442 | G M CORN CHEX | 6.8 | 45.1 | 51.7 | 0.051 | 0.003 | 0.103 |
+| 591705 | M-O-M GOLDEN PUFFS | 2.0 | 16.2 | 32.0 | 0.052 | 0.047 | 0.056 |
+| 557439 | G M COOKIE-CRISP | 6.6 | 42.9 | 47.0 | 0.053 | -0.010 | 0.111 |
+| 623816 | QKR CAP'N CRN CRN BRY | 3.7 | 36.9 | 50.3 | 0.056 | -0.003 | 0.100 |
+| 557586 | G M WHEAT CHEX | 6.9 | 46.7 | 54.5 | 0.058 | 0.011 | 0.109 |
+| 620469 | POST FRUITY PEBBLES | 4.7 | 33.5 | 47.3 | 0.058 | -0.010 | 0.115 |
+| 580036 | KEL SPECIAL K RED BERRY | 5.8 | 39.2 | 39.9 | 0.059 | 0.008 | 0.093 |
+| 579923 | KEL FROSTED MINI-WHEATS | 6.6 | 43.3 | 44.8 | 0.060 | -0.004 | 0.111 |
+| 579877 | KEL CRISPIX | 4.4 | 34.5 | 49.3 | 0.060 | -0.004 | 0.116 |
+| 579916 | KEL FROSTED FLAKES | 5.8 | 40.2 | 46.0 | 0.060 | -0.013 | 0.121 |
+| 620512 | POST HONEY BUNCHES OF OATS | 6.2 | 42.4 | 45.4 | 0.061 | 0.002 | 0.112 |
+| 579866 | KEL CORN FLAKES | 4.1 | 28.9 | 46.3 | 0.062 | -0.024 | 0.122 |
+| 557549 | G M RICE CHEX | 6.4 | 42.0 | 50.2 | 0.063 | 0.013 | 0.114 |
+| 557426 | G M CINNAMON TOAST CRUNCH | 6.9 | 43.4 | 45.6 | 0.064 | -0.002 | 0.122 |
+| 620458 | POST COCOA PEBBLES | 5.4 | 40.6 | 49.5 | 0.067 | 0.006 | 0.116 |
+| 620517 | POST HONEY-COMB | 3.9 | 32.1 | 44.4 | 0.073 | 0.009 | 0.120 |
+| 557587 | G M WHEATIES | 4.7 | 31.6 | 45.6 | 0.080 | 0.019 | 0.133 |
+| 579996 | KEL RAISIN BRAN | 6.5 | 44.5 | 46.1 | 0.080 | -0.003 | 0.138 |
+| 579998 | KEL RAISIN BRAN CRUNCH | 4.7 | 35.6 | 43.0 | 0.084 | 0.015 | 0.129 |
+| 579277 | KASHI GO LEAN CRUNCH! | 6.5 | 36.3 | 40.1 | 0.089 | 0.033 | 0.122 |
+| 591688 | M-O-M CINNAMON TOASTERS | 1.9 | 15.5 | 29.1 | 0.099 | 0.050 | 0.122 |
+| 591702 | M-O-M FROSTED MINI SPOONERS | 1.9 | 17.1 | 29.4 | 0.102 | 0.046 | 0.121 |
+| 623878 | QKR OATMEAL SQUARES | 5.5 | 44.7 | 43.2 | 0.107 | 0.002 | 0.184 |
+| 620481 | POST GRAPE-NUTS | 3.5 | 29.0 | 48.8 | 0.111 | 0.034 | 0.177 |
+
+Across brands, the D4 gap correlates -0.607 with the covered share and
+-0.528 with the coupon share.  Brands sold mostly outside RMS (the
+Malt-O-Meal brands, 29-32% covered) also carry few coupons and deals.  The
+sd of brand gaps is 0.026 for D4, 0.019 covered-only and 0.035
+uncovered-only.  The two largest D4 gaps (Grape-Nuts, Oatmeal Squares) are
+0.177-0.184 outside RMS and 0.002-0.034 inside it.
+
+** 6.5 Store-week match: does the Homescan price equal the RMS price?
+
+=src/rms_prices.py match --year Y=.  Panel-universe Homescan purchases
+at RMS stores (store-code link) are matched to RMS movement on
+(store_code_uc, upc, week_end), where week_end is the Saturday on or after
+the purchase date.  The Homescan unit price is total_price_paid /
+quantity; the RMS unit price is price / prmult.  r = log(HS / RMS).
+
+| year | store-linked rows | $ share of universe | matched same week | next week only | n matched | within 1 cent | within 1c, $-weighted | within 1c, net of coupon | mean r | sd r | p5 r | p95 r |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| 2008 | 176,409 | 38.6 | 96.2 | 0.9 | 169,697 | 86.7 | 86.4 | 71.1 | 0.009 | 0.135 | -0.004 | 0.062 |
+| 2014 | 139,752 | 36.9 | 94.3 | 1.6 | 131,756 | 78.0 | 77.1 | 59.7 | 0.007 | 0.170 | -0.090 | 0.162 |
+| 2022 | 105,973 | 42.3 | 94.9 | 1.8 | 100,575 | 70.2 | 68.7 | 62.4 | 0.085 | 0.318 | 0.000 | 0.732 |
+
+Distribution of r (% of matched records):
+
+| year | < -0.5 | -0.5..-0.1 | -0.1..-0.01 | within 0.01 | 0.01..0.1 | 0.1..0.5 | 0.5..0.6 | 0.6..0.8 | > 0.8 |
+|-|-|-|-|-|-|-|-|-|-|
+| 2008 | 0.35 | 2.06 | 2.25 | 87.52 | 3.63 | 3.35 | 0.19 | 0.40 | 0.25 |
+| 2014 | 1.55 | 3.27 | 2.16 | 78.75 | 7.53 | 5.24 | 0.46 | 0.69 | 0.35 |
+| 2022 | 0.04 | 0.69 | 1.16 | 72.67 | 14.02 | 2.92 | 0.77 | 4.22 | 3.51 |
+
+- The documented concept holds: the median r is 0 in every year, and
+  the share exact to the cent falls by 8-18 points when coupons are
+  netted.  So =total_price_paid= is the store's weekly price, gross of
+  coupons.  The exact-match share is a little lower for deal-flagged
+  records (2014: 75.7% vs 81.0%) and similar for quantity 1 and above.
+- The inexact records are concentrated in a few chains.  In 2014, 67% of
+  matched dollars are at chains where at least 90% of records match to
+  the cent, and 25% at 17 chains where fewer than half do.  In 2008 only
+  1.2% of dollars are at such chains (8 chains); in 2022, 29.7% (11
+  chains).  Two documented mechanisms fit, and these runs cannot tell
+  them apart: (i) chains where NielsenIQ "does not ascribe scanning
+  prices to panel data (panelists enter prices)", and (ii) chains whose
+  reporting week does not end on Saturday, so that the Saturday-on-or-after
+  rule matches the wrong week (both RMS p. 15, note B).
+- Household DMA (the panel's m) differs from the store's DMA (RMS's m)
+  for 2.0% (2008) and 3.2% (2014) of store-linked dollars.
+
+** 6.6 At RMS stores, why do cells still disagree?
+
+The same store-linked, matched purchases are priced four ways and
+aggregated to (t, m, j):
+1. =hs=: the Homescan price;
+2. =rms_week=: the matched RMS store-week price (same store, UPC and
+   week);
+3. =rms_storeqtr=: the RMS store-quarter average for that store and UPC
+   (units-weighted over the quarter's weeks);
+4. =rms=: the RMS cell price from =market_panel_rms=.
+
+Step 1 to 2 is recording or imputation error; 2 to 3 is the week the
+household bought in; 3 to 4 is which stores and UPCs (sizes) the sample
+bought, against all shoppers in the DMA.  Two-way FE are fitted on these
+cells (8,723-10,206 cells per year).
+
+| year | cells | mean (rms - hs) | of which recording | timing | store/UPC mix | corr 2w hs | corr 2w rms_week | corr 2w rms_storeqtr | sd 2w hs | sd 2w rms_week | sd 2w rms_storeqtr | sd 2w rms |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| 2008 | 10,206 | 0.009 | -0.010 | 0.011 | 0.008 | 0.492 | 0.511 | 0.656 | 0.146 | 0.147 | 0.121 | 0.080 |
+| 2014 | 10,126 | 0.000 | -0.013 | 0.004 | 0.009 | 0.349 | 0.371 | 0.545 | 0.155 | 0.156 | 0.113 | 0.070 |
+| 2022 | 8,723 | -0.020 | -0.066 | 0.033 | 0.013 | 0.337 | 0.347 | 0.525 | 0.186 | 0.229 | 0.154 | 0.088 |
+
+"corr 2w x" is the two-way correlation of pricing x with the RMS cell
+price.  On cells with 25-49 transactions it is 0.69 / 0.71 / 0.80
+(hs / rms_week / rms_storeqtr) in 2008 and 0.56 / 0.61 / 0.75 in 2014.
+
+- At RMS stores there is no level gap (2014: 0.000).
+- Replacing every Homescan price by the exact RMS store-week price raises
+  the correlation by only 0.01-0.02.  Recording and imputation errors are
+  not why the cells disagree.
+- Averaging over the quarter raises the correlation by 0.15-0.18 and cuts
+  the residual sd by a fifth to a third.  The weeks sample
+  households buy in (41% of dollars are deal-flagged) carry relative-price
+  variation that RMS averages away.  Households buy in slightly cheaper
+  weeks (timing +0.004 to +0.033).
+- The remaining distance to RMS (correlation 0.53-0.66) is store and UPC
+  mix: few households per cell, buying particular stores and package
+  sizes.
+
+** 6.7 Outside RMS: typed by panelists or imputed?
+
+=src/rms_prices.py probe --year Y= (2014, 2022), by store class, for
+panel-universe purchases.
+
+| class | 2014 $ % | 2022 $ % | has store code, 2014 % | top price-ending digit share, 2014 / 2022 % | same price for all households in a store-UPC-week, 2014 / 2022 % |
+|-|-|-|-|-|-|
+| RMS store | 36.9 | 42.3 | 100 | 42 / 41 | 91.9 / 95.2 |
+| RMS chain, other store | 7.1 | 4.9 | 72.9 | 56 / 51 | 85.7 / 95.2 |
+| the largest outside chain | 15.0 | 16.5 | 99.8 | 51 / 70 | 98.9 / 99.4 |
+| other outside, with store code | 25.9 | 20.1 | 100 | 40 / 30 | 94.7 / 92.0 |
+| outside, no store code | 15.1 | 16.1 | 0 | 45 / 42 | n/a |
+
+Neither fingerprint separates typed from imputed prices.  Panelists in
+the same store-UPC-week report one price 92-99% of the time in every
+class.  The largest outside chain's prices bunch on one ending digit, its
+own shelf-price convention.  That fits typed shelf prices, but it also
+fits imputation at a chain whose price does not move within the week.
+So it is not established whether the outside half of Homescan carries
+imputed or typed prices.  The store code is no guide either: almost every
+purchase at the largest outside chain has one.
+
+* 7. Which differences give one source residual price variation the other lacks (interpretation)
+
+D4's two-way correlation of 0.40, plateauing near 0.5 in thick cells,
+reads as a dollar-weighted mixture of two components.  The covered
+component is about 47% of panel dollars; its prices correlate 0.47
+with RMS, and about 0.7 in thick cells.  The uncovered component is
+about 53% of panel dollars; it correlates 0.22, and less as cells get
+thicker.  In order of importance, these are the differences that give
+the panel residual (within product, within (t, m)) variation that RMS
+lacks:
+
+1. *Retail sector.*  Half of panel dollars are at stores RMS does not
+   cover: the largest outside chain (about 15-17% of panel dollars), other
+   chains with store codes, and stores without codes.  Their relative
+   prices across brands within a market-quarter differ from those at RMS
+   chains, and the difference is systematic, not sampling.  They are also
+   9.3% cheaper on average, which is all of D4's level gap.
+2. *Purchase timing.*  Within RMS stores, a panel cell prices the
+   particular weeks its households bought in.  Deal weeks are
+   over-represented (53% of covered dollars are deal-flagged).  RMS
+   averages all weeks.  This is the largest within-store component
+   (+0.15-0.18 in correlation, 2008-2022).
+3. *Store and package-size mix of the sample.*  A cell holds a handful of
+   households (median 17 transactions; 8 at covered retailers).  The
+   stores and sizes they happen to buy shift the unit value per ounce.
+4. *Coupons, if netted.*  They are brand-specific (1.9-9.5% of gross),
+   with a two-way residual sd of 0.088 in log(1 - c), and RMS has nothing
+   like them.  The panel as built does not net them, so they are not in
+   D4's 0.40.
+5. *Recording and imputation error.*  Real (13-30% of matched records are
+   off by more than a cent) and concentrated in a few chains, but worth
+   only 0.01-0.02 of correlation at the cell level.
+6. *Minor:* household vs store DMA (2-3% of store-linked dollars),
+   late-transmission next-week prices (1-2% of records), and NielsenIQ's
+   RMS edits (<1%).
+
+What RMS has and the panel lacks: all shoppers in all weeks at covered
+stores.  That is why RMS's residual sd is lower (0.100 vs 0.128 on D4's
+cells, and 0.07-0.09 vs 0.15-0.19 on the store-linked cells of 6.6).
+RMS's quarter assignment by week_end (12-14 week quarters, D4) moves
+quantities but not prices.
+
+On theta (docs/rms-theta-gap.org; conjecture): the panel's extra residual
+price variation is not classical noise around the RMS price.  It is
+largely the price of a different retail sector, plus the households' own
+choice of weeks.  So these numbers cannot sign its effect on homog's
+theta, and they are consistent with the theta-gap note's finding that
+thicker panel cells do not move the panel toward RMS.  The direct test is
+homog on the panel rebuilt from covered purchases only.  Those cells are
+variant =covered_gross= of =hs_cells.parquet=, which =python
+src/rms_prices.py hs --outdir DIR= regenerates in about two minutes (the
+copy used here was in job scratch).  Whether to run it is EL's call.
+
+* 8. What is not established
+
+- Whether Homescan prices at non-RMS stores are typed by panelists or
+  imputed from NielsenIQ POS data at cooperators that do not share with
+  Kilts.  The documented rule implies imputation at every POS store, but
+  the probes in 6.7 cannot tell the two apart.
+- Why 17 chains (25% of matched dollars) match to the cent less than half
+  the time in 2014: the documented "panelists enter prices" exception,
+  or reporting weeks that do not end on Saturday.
+- *2021+ anomaly.*  In 2022, 7.7% of matched records have a Homescan
+  price 1.8 or more times the RMS store-week price (2014: 1.0%; 2008:
+  0.65%), and the mean r is 0.085.  prmult is 1 on every matched 2022 RMS
+  row, and there are no zero-price Homescan records in 2021+.  This is why
+  the covered-only mean d turns negative in 2021-2023 (-0.016 to
+  -0.024, section 6.3).  A
+  candidate cause is free-unit or multi-buy promotions that RMS counts
+  in units but Homescan does not reflect in its price; another is a
+  change in how NielsenIQ ascribes prices in the revised format.
+  Neither is checked.
+- Whether =coupon_value= includes retailer coupons, which RMS nets into
+  price.  The manual says only "discount ... due to coupon".
+- What "prior to any coupons or deals" means for prices panelists type
+  (CP p. 20): shelf price before a temporary reduction, or the price
+  paid before a register deduction.
+- Why covered cells plateau near 0.7 rather than higher, beyond the
+  timing and mix shown in 6.6.  Also why the Malt-O-Meal brands keep a
+  0.05 gap even at covered retailers (package-size mapping, or bag sizes
+  sold mainly through some chains, is a guess).
+- The theta consequence (section 7).
