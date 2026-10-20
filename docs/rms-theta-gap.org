@@ -247,3 +247,31 @@ Not run (EL's call): a thinning curve, homog on several random splits of
 trips at, say, 25/50/75% with a few seeds each (about 4 minutes per run on
 CPU).  It would show whether the panel's theta levels off as cells
 thicken, and where.
+
+* Thinning curve (2026-10-19)
+
+=homog= on panel cells rebuilt from a random share of trips (=src/rms_prices.py
+thin=, ab38383; CerealDemand =src/rms_theta_gap.py= T<pct>_<k>, f979a00).
+Each seed draws one uniform per trip, so one seed's subsets are nested.
+Keeping every trip reproduces the panel exactly.
+
+| share of trips | theta, seeds 1 / 2 / 3 | mean | sigma_logp |
+|-|-|-|-|
+| 25% | 0.4495 / 0.4694 / 0.4964 | 0.472 | 0.177-0.178 |
+| 50% | 0.8613 / 0.8828 / 0.8032 | 0.849 | 0.150-0.151 |
+| 75% | 1.0095 / 1.0918 / 1.0349* | 1.045 | 0.136 |
+| 100% (P0) | 1.2222 | 1.222 | 0.128 |
+| RMS (D6) | 2.2568 | | 0.101 |
+
+(* T75_3 did not converge; the other eight did.)  SEs are 0.04-0.06.
+
+What it shows:
+1. The panel's theta rises steadily with the number of purchases behind
+   each cell, and the seed-to-seed spread is small (at most 0.08).
+2. It has not levelled off at the full panel: the steps are +0.38, +0.20
+   and +0.18 per 25 points of trips.  So cell sampling noise in the
+   panel's unit values attenuates its theta, and the noise-free value is
+   above 1.22.
+3. Whether that value reaches RMS's 2.26 is not established; no
+   extrapolation has been fitted.  The DMA-size tertiles (RMS about 1.8x
+   the panel even in the largest DMAs) are evidence that it may not.
