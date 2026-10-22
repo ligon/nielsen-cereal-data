@@ -118,9 +118,7 @@ gate(f"AM (pinned 45) reproduces market_panel exactly ({len(mp_v):,} rows)",
 if not mp_v.equals(mp_o):
     print("    shapes", mp_v.shape, mp_o.shape)
 
-sys.path.insert(0, "src")
-import aggregate_markets as am
-pin = set(am.load_brands_45()["j"])
+pin = set(pd.read_csv("config/brands_45.csv")["j"].astype("int64"))
 hp = rd(new, "household_panel")
 gate("household_panel j set == pinned 45",
      set(hp.index.get_level_values("j")) == pin)

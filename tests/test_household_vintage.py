@@ -23,8 +23,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import aggregate_markets as am  # noqa: E402
 import demographics as dg  # noqa: E402
+
+# the pinned 45, read directly (not through a loader, whose home differs
+# between this branch and `crosswalk`)
+PIN = set(pd.read_csv(Path(__file__).resolve().parent.parent
+                      / "config" / "brands_45.csv")["j"].astype("int64"))
 
 HH_CLEAN = Path(os.environ.get(
     "HH_CLEAN",
@@ -66,7 +70,7 @@ def test_panelist_reader_keeps_household_size_both_eras(tmp_path):
 def test_household_panel_brand_set_is_the_pin():
     hp = pd.read_parquet(HH_CLEAN / "household_panel.parquet", columns=["S"])
     js = set(hp.index.get_level_values("j").astype("int64"))
-    assert js == set(am.load_brands_45()["j"])
+    assert js == PIN
     bs = pd.read_parquet(HH_CLEAN / "household_base_shares.parquet")
     bj = set(bs.index.get_level_values("j").astype("int64"))
     assert 536746 not in bj and 591705 in bj
