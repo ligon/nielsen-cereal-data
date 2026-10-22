@@ -11,7 +11,9 @@ Outputs:
 
   data/clean/demographics_household.parquet
     Index: (i, t) — household x quarter
-    Columns: demographic values for each household-quarter
+    Columns: demographic values for each household-quarter, plus
+             household_size (NielsenIQ Household_Size: persons, 1-9, code 9
+             = nine or more; the same raw column AM's market_size sums)
 
 Usage:
     python src/demographics.py [--config config/default.yaml]
@@ -77,9 +79,12 @@ def _read_one_panelist_demog(raw_dir, year, demog_cols, fips_to_dma):
                 on=["fips_state_code", "fips_county_code"])
             out["DMA_Cd"] = mapped["DMA_Cd"].values
 
-    # Keep only the columns we need
-    keep = ["household_code", "panel_year", "DMA_Cd", "projection_factor"]
-    keep += [c for c in demog_cols if c in out.columns]
+    # Keep only the columns we need.  household_size is always kept (not a
+    # config demographic: it gets no market mean and is not a Pi regressor);
+    # it goes to demographics_household for household-level micro moments.
+    keep = ["household_code", "panel_year", "DMA_Cd", "projection_factor",
+            "household_size"]
+    keep += [c for c in demog_cols if c in out.columns and c not in keep]
     out = out[[c for c in keep if c in out.columns]]
     return out
 
@@ -184,7 +189,8 @@ def _quarter_from_panel_year(panel_year, frequency):
         raise ValueError(f"Unknown frequency: {frequency}")
 
 
-def compute_demographics(cfg, years=None, market_only=False):
+def compute_demographics(cfg, years=None, market_only=False,
+                         raw_dir="data/raw", clean_dir="data/clean"):
     """Compute market-level and household-level demographics.
 
     Parameters
@@ -204,8 +210,10 @@ def compute_demographics(cfg, years=None, market_only=False):
         demographics_market (t, m) and demographics_household (i, t) (None when
         ``market_only``).
     """
-    raw_dir = Path("data/raw")
-    clean_dir = Path("data/clean")
+    # --raw-dir / --clean-dir: a new data vintage is written to its own
+    # directory (as in AM/AH).  Defaults: the old relative paths.
+    raw_dir = Path(raw_dir)
+    clean_dir = Path(clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
 
     if years is None:
@@ -326,7 +334,8 @@ def compute_demographics(cfg, years=None, market_only=False):
 
     demog_hh = (
         panelists_qt[["household_code", "t", "DMA_Cd", "panel_year",
-                       "projection_factor"] + available_demog]
+                       "projection_factor", "household_size"]
+                      + [c for c in available_demog if c != "household_size"]]
         .rename(columns={"household_code": "i", "DMA_Cd": "m"})
     )
     demog_hh["market_ids"] = demog_hh["t"] + "_DMA_" + demog_hh["m"].astype(int).astype(str)
@@ -362,6 +371,10 @@ def main():
     parser.add_argument("--market-only", action="store_true",
                         help="Rebuild ONLY demographics_market.parquet "
                              "(skip household-level computation/write).")
+    parser.add_argument("--raw-dir", default="data/raw",
+                        help="Homescan raw parquet directory (read)")
+    parser.add_argument("--clean-dir", default="data/clean",
+                        help="output directory (a new vintage dir)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -370,7 +383,8 @@ def main():
     else:
         years = None
 
-    compute_demographics(cfg, years=years, market_only=args.market_only)
+    compute_demographics(cfg, years=years, market_only=args.market_only,
+                         raw_dir=args.raw_dir, clean_dir=args.clean_dir)
 
 
 if __name__ == "__main__":

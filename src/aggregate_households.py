@@ -42,7 +42,7 @@ from aggregate_markets import (
 # Household-level aggregation
 # ---------------------------------------------------------------------------
 
-def aggregate_households(cfg, years=None):
+def aggregate_households(cfg, years=None, raw_dir="data/raw", clean_dir="data/clean"):
     """Run the household-level aggregation pipeline.
 
     Parameters
@@ -57,8 +57,12 @@ def aggregate_households(cfg, years=None):
     (pd.DataFrame, pd.DataFrame)
         household_panel and household_base_shares.
     """
-    raw_dir = Path("data/raw")
-    clean_dir = Path("data/clean")
+    # --raw-dir / --clean-dir (charter-crosswalk ledger G2): a new data
+    # vintage is written to its own directory, seeded first with the
+    # unchanged inputs read from clean_dir (nutrition.parquet,
+    # demographics_household.parquet).  Defaults: the old relative paths.
+    raw_dir = Path(raw_dir)
+    clean_dir = Path(clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
 
     if years is None:
@@ -140,6 +144,9 @@ def aggregate_households(cfg, years=None):
     merged = _add_quarter(merged)
 
     print("\n[5/8] Selecting top products and markets...")
+    # A3: the pinned 45 (config/brands_45.csv), the market panel's set.  AH
+    # has no CTL drop; the pin excludes CTL BR (536746) and includes M-O-M
+    # GOLDEN PUFFS (591705), which re-ranking here used to swap (ledger G1).
     top_brand_codes = _select_top_brands(merged, n_products, clean_dir)
     merged = merged[merged["brand_code_uc"].isin(top_brand_codes)]
     print(f"  After brand filter: {len(merged):,} rows")
@@ -294,8 +301,11 @@ def aggregate_households(cfg, years=None):
         # Keep ONLY the demographic variables; exclude index/metadata columns
         # (panel_year, m, market_ids, projection_factor) which would collide with
         # the panel's existing columns on the (i,t) merge -> _x/_y suffixes ->
-        # KeyError downstream.
-        _demog_meta = {"i", "t", "m", "panel_year", "market_ids", "projection_factor"}
+        # KeyError downstream.  household_size (a household attribute carried
+        # in demographics_household for micro moments, not a Pi demographic)
+        # is excluded too, so household_panel's columns do not change.
+        _demog_meta = {"i", "t", "m", "panel_year", "market_ids",
+                       "projection_factor", "household_size"}
         demog_cols = [c for c in demog.columns if c not in _demog_meta]
         panel = panel.merge(demog[["i", "t"] + demog_cols],
                             on=["i", "t"], how="left")
@@ -390,6 +400,11 @@ def main():
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--years", nargs=2, type=int, default=None,
                         help="Override year range (e.g., --years 2014 2018)")
+    parser.add_argument("--raw-dir", default="data/raw",
+                        help="Homescan raw parquet directory (read)")
+    parser.add_argument("--clean-dir", default="data/clean",
+                        help="output directory (a new vintage dir, seeded "
+                             "with nutrition/demographics inputs)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -398,7 +413,8 @@ def main():
     else:
         years = None
 
-    aggregate_households(cfg, years=years)
+    aggregate_households(cfg, years=years, raw_dir=args.raw_dir,
+                                    clean_dir=args.clean_dir)
 
 
 if __name__ == "__main__":

@@ -83,8 +83,9 @@ nutrition with zero missing values.
 Top 45 brands by total expenditure over the configured year range.
 With the full 2004--2024 window, 38 of 45 brands overlap the old
 2014--2018 selection; 7 brands rotated in/out due to the longer
-ranking period.  The set is determined by =config/default.yaml=
-(=n_products=, =years=).
+ranking period.  The set is pinned in =config/brands_45.csv= (the
+CTL-free 2004--2024 top 45; charter-crosswalk Q3), which both the
+market and household builders read; =n_products= must equal its length.
 
 ** Demographics (for agent data construction)
 
@@ -100,7 +101,8 @@ Index: =(i, t)= --- household \(\times\) quarter.
 | =panel_year=        | For deriving =year=                         |
 | =projection_factor= | Nielsen sampling weight                     |
 | =household_income=  | Nielsen bracket code (3--30)                |
-| =male_head_age=     | Nielsen bracket code (0--9)                 |
+| =male_head_age=     | Nielsen bracket code (0--9; 0 = no male head) |
+| =household_size=    | Persons in the household (1--9; 9 = nine+)  |
 
 The estimation side is responsible for: subsampling to N agents per
 market, computing weights, and deriving binary flags (=has_children=,
@@ -112,7 +114,9 @@ market-level means =(t, m)= for the same demographic variables.
 ** Household panel (microdata extension)
 
 =data/clean/household_panel.parquet= --- index =(i, t, j)=, same
-columns as market panel plus household demographics.
+columns as market panel plus household demographics.  Same 45 brands as
+the market panel: both builders take the pinned list
+=config/brands_45.csv= (=aggregate_markets._select_top_brands=).
 
 =data/clean/household_base_shares.parquet= --- index =(i, j)=,
 predetermined shares from =base_period= (default Q1 2014) for

@@ -375,45 +375,46 @@ def _add_quarter(df):
 # Product selection
 # ---------------------------------------------------------------------------
 
-def _select_top_brands(purchases, n_products, clean_dir):
-    """Select top N brands by total expenditure.
+# The pinned 45 (charter-crosswalk Q3/A3, EL 2026-10-19), backported from
+# branch `crosswalk` (1365e03) for the household brand-set fix: one committed
+# list, config/brands_45.csv, consumed by AM (here) and AH (which imports
+# _select_top_brands), so the market and household panels cannot select
+# different brands.  On `crosswalk` the loader lives in src/brand_route.py;
+# when merging, take crosswalk's _select_top_brands and drop these two names.
+BRANDS_45 = Path(__file__).resolve().parent.parent / "config" / "brands_45.csv"
 
-    If data/clean/selected_brands.parquet exists, use it.
-    Otherwise compute from purchases.
+
+def load_brands_45(path=BRANDS_45) -> pd.DataFrame:
+    """The pinned 45 (Q3): columns j, brand_descr, in committed order."""
+    b = pd.read_csv(path)
+    b["j"] = b["j"].astype("int64")
+    assert b["j"].is_unique and len(b) == 45, path
+    return b
+
+
+def _select_top_brands(purchases, n_products, clean_dir=None, pinned=None):
+    """The 45 brands: the committed list config/brands_45.csv (charter-
+    crosswalk Q3 "pin today's 45"; A3).  No re-ranking and no
+    selected_brands.parquet cache: the list is the selection.  Fails hard if
+    the list's length is not n_products or any pinned brand has no purchase
+    rows here (a route change must not silently change the set).
+    `clean_dir` is accepted for the old call signature and ignored.
     """
-    sel_path = clean_dir / "selected_brands.parquet"
-    if sel_path.exists():
-        top = pd.read_parquet(sel_path)
-        if "brand_code_uc" in top.columns:
-            cached = top["brand_code_uc"].dropna().unique().tolist()
-            # Guard: the cache (built by select_products.py) is NOT CTL-filtered
-            # and may predate the current window.  `purchases` here is already
-            # CTL-dropped, so intersect with the codes actually present -- a
-            # stale/contaminated cache can then never reintroduce CTL or pick a
-            # brand absent from this run.  Fall through to a fresh ranking if the
-            # filtered cache is short of n_products.
-            present = set(purchases["brand_code_uc"].dropna().unique())
-            cached = [c for c in cached if c in present]
-            if len(cached) >= n_products:
-                print(f"  Using saved brand selection: {len(cached)} valid "
-                      f"brands (CTL-guarded)")
-                return np.array(cached[:n_products])
-            print(f"  Saved selection has only {len(cached)} valid brands "
-                  f"(<{n_products}); recomputing from CTL-dropped purchases")
-
-    # Compute from purchases (only rows with valid brand_code_uc)
+    b = load_brands_45(pinned or BRANDS_45)
+    codes = b["j"].to_numpy()
+    if len(codes) != n_products:
+        raise ValueError(f"pinned brand list has {len(codes)} brands, "
+                         f"config n_products = {n_products}")
+    present = set(pd.Series(purchases["brand_code_uc"]).dropna().astype("int64"))
+    missing = [int(c) for c in codes if int(c) not in present]
+    if missing:
+        raise ValueError(f"pinned brands with no purchases: {missing}")
     valid = purchases.dropna(subset=["brand_code_uc"])
-    spend = (
-        valid
-        .groupby("brand_code_uc")["total_price_paid"]
-        .sum()
-        .sort_values(ascending=False)
-    )
-    brand_codes = spend.head(n_products).index.values
-    print(f"  Selected top {len(brand_codes)} brands by expenditure "
-          f"(covers {spend.head(n_products).sum() / spend.sum():.1%} "
-          f"of cereal spending)")
-    return brand_codes
+    cov = valid.loc[valid["brand_code_uc"].isin(codes),
+                    "total_price_paid"].sum() / valid["total_price_paid"].sum()
+    print(f"  Pinned {len(codes)} brands (config/brands_45.csv; "
+          f"cover {cov:.1%} of cereal spending)")
+    return codes
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +465,7 @@ def _compute_market_size(panelists, top_dmas, oz_per_day, frequency):
 # Main aggregation
 # ---------------------------------------------------------------------------
 
-def aggregate_markets(cfg, years=None):
+def aggregate_markets(cfg, years=None, raw_dir="data/raw", clean_dir="data/clean"):
     """Run the full aggregation pipeline.
 
     Parameters
@@ -479,8 +480,12 @@ def aggregate_markets(cfg, years=None):
     pd.DataFrame
         Market panel with index (t, m, j).
     """
-    raw_dir = Path("data/raw")
-    clean_dir = Path("data/clean")
+    # --raw-dir / --clean-dir (charter-crosswalk ledger G2): a new data
+    # vintage is written to its own directory, seeded first with the
+    # unchanged inputs read from clean_dir (nutrition.parquet,
+    # demographics_household.parquet).  Defaults: the old relative paths.
+    raw_dir = Path(raw_dir)
+    clean_dir = Path(clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
 
     if years is None:
@@ -822,6 +827,11 @@ def main():
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--years", nargs=2, type=int, default=None,
                         help="Override year range (e.g., --years 2014 2018)")
+    parser.add_argument("--raw-dir", default="data/raw",
+                        help="Homescan raw parquet directory (read)")
+    parser.add_argument("--clean-dir", default="data/clean",
+                        help="output directory (a new vintage dir, seeded "
+                             "with nutrition/demographics inputs)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -831,7 +841,8 @@ def main():
     else:
         years = None
 
-    aggregate_markets(cfg, years=years)
+    aggregate_markets(cfg, years=years, raw_dir=args.raw_dir,
+                                 clean_dir=args.clean_dir)
 
 
 if __name__ == "__main__":
