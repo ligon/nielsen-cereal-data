@@ -46,7 +46,8 @@ VINTAGE=${VINTAGE:-$DATA_REPO/data/clean-hhfix-2026-10-22}
 VERIFY=$DATA_REPO/log/hhfix-2026-10-22-am-verify-${SLURM_JOB_ID}
 
 echo "=== node $(hostname); start $(date) ==="
-echo "code: $(pwd) @ $(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+CODE_REV="$(git rev-parse --short HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+echo "code: $(pwd) @ $CODE_REV"
 git status --short | sed 's/^/  dirty: /'
 echo "old: $OLD"; echo "vintage: $VINTAGE"
 
@@ -138,7 +139,7 @@ ls -l "$VINTAGE"
 ( cd "$VINTAGE" && sha256sum *.parquet ) | tee "$VINTAGE/SHA256SUMS"
 { echo "vintage: $(basename "$VINTAGE")"
   echo "built: $(date -Is) by Slurm job $SLURM_JOB_ID on $(hostname)"
-  echo "code: nielsen-cereal-data $(git rev-parse HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+  echo "code: nielsen-cereal-data $CODE_REV"
   echo "rebuilt: demographics_household (+household_size), household_panel, household_base_shares"
   echo "copied unchanged from data/clean: market_panel, demographics_market, nutrition,"
   echo "  nutrition_2021_brands, brand_crosswalk, brand_ranking"
