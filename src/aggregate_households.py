@@ -39,6 +39,55 @@ from aggregate_markets import (
 
 
 # ---------------------------------------------------------------------------
+# Cell panel year
+# ---------------------------------------------------------------------------
+
+def _dominant_panel_year(merged, grp_cols):
+    """The (panel_year, DMA_Cd) of each household x quarter x brand cell.
+
+    Why a cell can have two: NielsenIQ panel years are Sunday-Saturday
+    52/53-week years, not calendar years.  The panel-year trip files tile time
+    with no overlap and no gap (2015 = 2014-12-28..2015-12-26, 2016 =
+    2015-12-27..2016-12-31, 2020 = 2019-12-29..2021-01-02, ...), so a calendar
+    quarter t (from purchase_date) at a year boundary takes purchases from two
+    adjacent panel-year files: Q4 of year Y when panel year Y+1 starts before
+    Jan 1, Q1 of Y when panel year Y-1 runs past Dec 31 (Q1Y2021, Q1Y2022).
+    These are distinct trips on distinct dates, not duplicates.  DMA_Cd comes
+    from the household's panelist record for each purchase's panel year, so
+    it can differ between the two sides when the household moved.
+
+    What it decides: the cell's panel_year column, its m, and through
+    (panel_year, m) its market_size, hence S.
+
+    Rule (a total order, so the result does not depend on row order):
+      1. larger spend in the cell, compared in integer cents (so float
+         summation order cannot split a tie);
+      2. on a spend tie, the panel year equal to the calendar year of t
+         (the year demographics_household and market_panel's market_size
+         assign to t);
+      3. then the smaller panel_year, then the smaller DMA_Cd (fallbacks;
+         DMA_Cd is unique within (household, panel_year)).
+    The old code sorted on spend alone with an unstable sort, so on an exact
+    tie the winner depended on which other rows were present.  2004-2024
+    (2026-10-22): 16,806 cells (0.35%) draw on two panel years, 1,376 of
+    them tie exactly (a repeat buy of the same box at the same price, the
+    two sides a median 41 days apart); 585 of those flipped between
+    data/clean and clean-hhfix-2026-10-22.
+    """
+    keys = grp_cols + ["panel_year", "DMA_Cd"]
+    ci = (merged.groupby(keys, sort=False)["total_price_paid"].sum()
+          .reset_index())
+    ci["_cents"] = np.round(ci["total_price_paid"] * 100).astype("int64")
+    ci["_cal"] = ci["panel_year"] == ci["t"].str[-4:].astype("int64")
+    ci = ci.sort_values(grp_cols + ["_cents", "_cal", "panel_year", "DMA_Cd"],
+                        ascending=[True] * len(grp_cols)
+                        + [False, False, True, True],
+                        kind="stable")
+    return (ci.drop_duplicates(subset=grp_cols, keep="first")
+            [keys].reset_index(drop=True))
+
+
+# ---------------------------------------------------------------------------
 # Household-level aggregation
 # ---------------------------------------------------------------------------
 
@@ -186,16 +235,8 @@ def aggregate_households(cfg, years=None, raw_dir="data/raw", clean_dir="data/cl
         .reset_index()
     )
 
-    # Dominant panel_year and DMA per cell
-    cell_info = (
-        merged
-        .groupby(grp_cols + ["panel_year", "DMA_Cd"])["total_price_paid"]
-        .sum()
-        .reset_index()
-        .sort_values("total_price_paid", ascending=False)
-        .drop_duplicates(subset=grp_cols)
-        [grp_cols + ["panel_year", "DMA_Cd"]]
-    )
+    # Dominant panel_year and DMA per cell (deterministic; see the helper)
+    cell_info = _dominant_panel_year(merged, grp_cols)
     agg = agg.merge(cell_info, on=grp_cols, how="left")
 
     # Price per oz

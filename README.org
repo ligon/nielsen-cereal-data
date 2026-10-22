@@ -118,6 +118,14 @@ columns as market panel plus household demographics.  Same 45 brands as
 the market panel: both builders take the pinned list
 =config/brands_45.csv= (=aggregate_markets._select_top_brands=).
 
+A cell's =panel_year= and =m= (and so its =market_size= and =S=) come
+from the panel year with the larger spend in the cell.  NielsenIQ panel
+years are Sunday--Saturday years whose trip files tile time without
+overlap (panel year 2015 = 2014-12-28..2015-12-26), so only Q4 cells
+(and Q1Y2021, Q1Y2022) can draw on two panel years.  An exact spend tie
+goes to the panel year equal to the calendar year of =t=
+(=aggregate_households._dominant_panel_year=).
+
 =data/clean/household_base_shares.parquet= --- index =(i, j)=,
 predetermined shares from =base_period= (default Q1 2014) for
 shift-share instruments.
