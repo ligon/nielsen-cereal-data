@@ -206,35 +206,85 @@ def _check_cells(rms, year, dma, q, upc_map):
     np.testing.assert_array_equal(got["n_transactions"], want["n_transactions"])
 
 
-def test_recompute_classic_cell(rms, panel):
-    """Q2Y2016, New York: rms_versions -> master on (upc, upc_ver_uc)."""
-    rv = pd.read_parquet(OUT / "2016" / "rms_versions.parquet")
-    master = pd.read_parquet(OUT / "master_products_1344.parquet")
+def _classic_cell_upc_map(rv, master, js, shared_route):
+    """Versioned master map, with Q2 merges only for a shared-route build."""
     um = rv.merge(master, on=["upc", "upc_ver_uc"])[
         ["upc", "brand_code_uc", "brand_descr", "size1_amount", "size1_units"]]
-    um = um[um["brand_code_uc"].isin(panel.index.get_level_values("j"))]
+    if shared_route:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from brand_route import merge_codes
+        um["brand_code_uc"] = merge_codes(um["brand_code_uc"])
+    return um[um["brand_code_uc"].isin(js)]
+
+
+@pytest.mark.parametrize("shared_route", [False, True])
+def test_classic_cell_map_merges_before_45_filter(shared_route):
+    rv = pd.DataFrame({"upc": [1, 2, 3], "upc_ver_uc": 1})
+    master = rv.assign(brand_code_uc=[620485, 747763, 557396],
+                       brand_descr=["Great Grains", "Classic Trix", "Cheerios"],
+                       size1_amount=12.0, size1_units="OZ")
+    um = _classic_cell_upc_map(rv, master, {620554, 557579, 557396}, shared_route)
+    want = {1: 620554, 2: 557579, 3: 557396} if shared_route else {3: 557396}
+    assert um.set_index("upc")["brand_code_uc"].to_dict() == want
+    assert master["brand_code_uc"].tolist() == [620485, 747763, 557396]
+
+
+def test_recompute_classic_cell(rms, panel):
+    """Q2Y2016, New York: rms_versions -> master, with Q2 merges for a
+    shared-route build.  Accepted name-route builds keep their raw codes."""
+    rv = pd.read_parquet(OUT / "2016" / "rms_versions.parquet")
+    master = pd.read_parquet(OUT / "master_products_1344.parquet")
+    shared_route = "j_route" in pq.read_schema(OUT / "diagnostics" / "upc_routes.parquet").names
+    um = _classic_cell_upc_map(rv, master, panel.index.get_level_values("j"),
+                              shared_route)
     _check_cells(rms, 2016, 501, 2, um)
+
+
+def _shared_route_mismatches(routes, year):
+    """(number of the year's UPCs, number whose built j differs from j
+    re-derived through src/brand_route.py from Homescan raw + the master).
+    For a build on the shared brand route (upc_routes carries j_route)."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from brand_route import BrandRoute
+    br = BrandRoute.from_paths(PANEL_RAW, OUT / "master_products_1344.parquet")
+    built = routes[routes["year"] == year].set_index("upc")["brand_code_uc"]
+    ind = br.route(year, built.index.to_numpy()).set_index("upc")["j"]
+    ind = ind.reindex(built.index)
+    same = (built == ind) | (built.isna() & ind.isna())
+    return len(built), int((~same).sum())
 
 
 def test_recompute_revised_cell_and_name_route(rms, panel):
     """Q3Y2022, New York.  The upc map is the build's (diagnostics), but its
-    same-year name-route rows are re-derived here independently from the
-    Homescan purchases and the crosswalk (AM:245-250)."""
+    2022 brand assignments are re-derived here: for an
+    accepted (name-route) build from the Homescan purchases and the
+    crosswalk (AM:245-250); for a build on the shared brand route
+    (charter-crosswalk; upc_routes carries j_route) through
+    the production src/brand_route.py from Homescan raw and the master, on
+    every 2022 UPC.  The shared-route branch checks build consistency, not
+    an independent implementation of the assignment rule."""
     routes = pd.read_parquet(OUT / "diagnostics" / "upc_routes.parquet")
     um = routes[(routes["year"] == 2022) & routes["brand_code_uc"].notna()].copy()
     um["brand_code_uc"] = um["brand_code_uc"].astype("int64")
     um = um[um["brand_code_uc"].isin(panel.index.get_level_values("j"))]
 
-    h = pd.read_parquet(PANEL_RAW / "purchases_2022.parquet",
-                        columns=["upc", "brand_descr_hms"]).drop_duplicates("upc")
-    x = (pd.read_parquet(PANEL_CLEAN / "brand_crosswalk.parquet")
-         .drop_duplicates("brand_descr_2021"))
-    h = h.merge(x[["brand_descr_2021", "brand_code_uc"]],
-                left_on="brand_descr_hms", right_on="brand_descr_2021")
-    same = um[um["route"] == "hms_same_year"].merge(h, on="upc",
-                                                    suffixes=("", "_ind"))
-    assert len(same) > 100
-    assert (same["brand_code_uc"] == same["brand_code_uc_ind"]).all()
+    if "j_route" in routes.columns:
+        n, bad = _shared_route_mismatches(routes, 2022)
+        assert n > 1000
+        assert bad == 0
+    else:
+        h = pd.read_parquet(PANEL_RAW / "purchases_2022.parquet",
+                            columns=["upc", "brand_descr_hms"]).drop_duplicates("upc")
+        x = (pd.read_parquet(PANEL_CLEAN / "brand_crosswalk.parquet")
+             .drop_duplicates("brand_descr_2021"))
+        h = h.merge(x[["brand_descr_2021", "brand_code_uc"]],
+                    left_on="brand_descr_hms", right_on="brand_descr_2021")
+        same = um[um["route"] == "hms_same_year"].merge(h, on="upc",
+                                                        suffixes=("", "_ind"))
+        assert len(same) > 100
+        assert (same["brand_code_uc"] == same["brand_code_uc_ind"]).all()
     _check_cells(rms, 2022, 501, 3,
                  um[["upc", "brand_code_uc", "brand_descr", "size1_amount",
                      "size1_units"]])

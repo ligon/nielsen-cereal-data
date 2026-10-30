@@ -1,7 +1,7 @@
 CONFIG ?= config/default.yaml
 PYTHON ?= .venv/bin/python
 
-.PHONY: all extract crosswalk nutrition markets households demographics help clean-data rms rms-test rms-validate
+.PHONY: all extract crosswalk nutrition markets households demographics help clean-data rms rms-test rms-validate crosswalk-eval crosswalk-check crosswalk-test crosswalk-report
 
 help:
 	@echo "nielsen-cereal-data pipeline"
@@ -75,3 +75,28 @@ rms-test:
 # present) rms/laws/homog_compare.json from CerealDemand src/rms_homog_compare.py.
 rms-validate:
 	$(RMS_PYTHON) src/rms_validate.py
+
+# --- charter-crosswalk (the 2021+ brand route; docs/crosswalk-rule.org) ----
+# UPC-dollar evaluation of today's vs the new route, both sources, written
+# under XW_EVAL (group-only); reads Homescan raw, rms/diagnostics/upc_routes
+# and the accepted crosswalk.  Never writes data/clean.
+XW_EVAL ?= /global/scratch/fsa/fc_jevons/ligon/mirrors/nielsen-cereal-data/data/clean-crosswalk-2026-10-19/run1-eval
+XW_ROUTE ?= new
+
+crosswalk-eval:
+	$(RMS_PYTHON) src/crosswalk_eval.py --out $(XW_EVAL)
+
+# A4/A5/A6 on the evaluation (exit 1 on any non-allow-listed failure);
+# XW_ROUTE=old shows today's route failing.
+crosswalk-check:
+	$(RMS_PYTHON) src/crosswalk_checks.py --eval $(XW_EVAL) --route $(XW_ROUTE)
+
+crosswalk-test:
+	CROSSWALK_EVAL=$(XW_EVAL) $(RMS_PYTHON) -m pytest -q -p no:cacheprovider \
+		tests/test_brand_route.py tests/test_pinned_brands.py \
+		tests/test_crosswalk_criteria.py tests/test_rms_validate_merge.py
+
+# Aggregate report written beside the external evaluation outputs.
+crosswalk-report: crosswalk-eval
+	$(RMS_PYTHON) src/crosswalk_report.py --eval $(XW_EVAL) \
+		--out $(XW_EVAL)/crosswalk-before-after.org

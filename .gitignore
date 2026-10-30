@@ -20,3 +20,8 @@ __pycache__/
 # Logs
 *.log
 src/__pycache__/
+
+# All local data and generated log directories remain outside version control.
+data/
+log/
+logs/

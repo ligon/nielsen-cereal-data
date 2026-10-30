@@ -30,7 +30,7 @@ from aggregate_markets import (
     load_config,
     _build_fips_to_dma,
     _load_all_data,
-    _apply_brand_crosswalk,
+    _apply_brand_route,
     _select_top_brands,
     _add_quarter,
     _compute_market_size,
@@ -144,11 +144,9 @@ def aggregate_households(cfg, years=None, raw_dir="data/raw", clean_dir="data/cl
         raw_dir, available_years, fips_to_dma
     )
 
-    if purchases["brand_code_uc"].isna().any():
-        print("\n[3/8] Applying brand crosswalk...")
-        purchases = _apply_brand_crosswalk(purchases, raw_dir, modules)
-    else:
-        print("\n[3/8] Brand crosswalk: not needed")
+    # The shared brand route (src/brand_route.py), same call as AM.
+    print("\n[3/8] Applying the brand route (merge sets; 2021+ UPC -> j)...")
+    purchases = _apply_brand_route(purchases, raw_dir, modules)
 
     n_before = len(purchases)
     purchases = purchases.dropna(subset=["brand_code_uc"])

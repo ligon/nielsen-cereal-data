@@ -16,8 +16,16 @@ This crosswalk is essential for:
   2. Tracking the same brand across the full 2004-2024 sample
   3. Building a unified product panel with consistent identifiers
 
+Since charter-crosswalk (2026-10-19) the 2021+ route is src/brand_route.py
+(UPC first, then a name map learned from all of 2021-2024; rule in
+docs/crosswalk-rule.org).  main() now writes that route's name map,
+CLEAN/brand_name_map.parquet, and NO LONGER writes brand_crosswalk.parquet;
+the builders no longer read it.  build_crosswalk() below is the old
+(pre-2026-10-19) artifact's logic, kept only for comparison.
+
 Usage:
     python src/brand_crosswalk.py [--config config/default.yaml]
+        [--raw-dir data/raw] [--clean-dir data/clean] [--master PATH]
 """
 import argparse
 from pathlib import Path
@@ -76,33 +84,50 @@ def build_crosswalk(raw_dir, modules):
     return crosswalk
 
 
+def build_name_map(raw_dir, modules, master_path=None):
+    """The 2021+ name map of the shared brand route (src/brand_route.py;
+    docs/crosswalk-rule.org): one row per 2021-2024 Homescan name, its
+    learned legacy code (dollar majority over all of 2021-2024 on
+    legacy-coded UPCs, merged), the code after the curated overrides, and
+    the evidence (dollars and UPC counts).  This is the crosswalk artifact
+    of the new route; build_crosswalk above is the pre-2026-10-19 route,
+    kept only so the before/after report can reproduce it."""
+    from brand_route import BrandRoute
+    raw = Path(raw_dir)
+    br = BrandRoute.from_paths(raw, master_path or raw / "master_products.parquet",
+                               tuple(modules))
+    nm = br.name_map.copy()
+    nm["j"] = nm["brand_descr_hms"].map(br._final_name)
+    nm["override"] = nm["brand_descr_hms"].isin(list(br.overrides))
+    return nm
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Build brand crosswalk between NielsenIQ eras")
+        description="Build the 2021+ brand name map (shared brand route)")
     parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument("--raw-dir", default="data/raw")
+    parser.add_argument("--clean-dir", default="data/clean")
+    parser.add_argument("--master", default=None,
+                        help="product master (default RAW/master_products.parquet)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     modules = cfg["modules"]
-    raw_dir = Path("data/raw")
-    clean_dir = Path("data/clean")
+    raw_dir = Path(args.raw_dir)
+    clean_dir = Path(args.clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
 
-    crosswalk = build_crosswalk(raw_dir, modules)
-
-    out_path = clean_dir / "brand_crosswalk.parquet"
-    crosswalk.to_parquet(out_path, index=False)
-
-    print(f"Brand crosswalk: {len(crosswalk)} brands matched via UPC overlap")
-    print(f"Saved to {out_path}")
-    print()
-
-    # Show top brands
-    print(f"{'Legacy name':40s}  {'2021+ name':40s}  UPCs")
-    print("-" * 90)
-    for _, row in crosswalk.head(30).iterrows():
-        print(f"{row.brand_descr_legacy:40s}  {row.brand_descr_2021:40s}  "
-              f"{row.n_upc_overlap:3d}")
+    nm = build_name_map(raw_dir, modules, args.master)
+    out_path = clean_dir / "brand_name_map.parquet"
+    nm.to_parquet(out_path, index=False)
+    print(f"Brand name map: {len(nm)} 2021+ names, "
+          f"{int(nm['j'].notna().sum())} placed; saved to {out_path}")
+    top = nm.sort_values("new_dollars", ascending=False).head(30)
+    print(f"{'2021+ name':32s} {'j':>8s} {'share':>6s} {'new-UPC $':>10s}")
+    for _, r in top.iterrows():
+        print(f"{r.brand_descr_hms:32s} {r.j:8.0f} {r.share:6.2f} "
+              f"{r.new_dollars:10.0f}")
 
 
 if __name__ == "__main__":

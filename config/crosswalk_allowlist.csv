@@ -1,0 +1,8 @@
+criterion,source,j,year_lo,year_hi,reason
+A5,hms,620481,2005,2007,Historical panel exception predating the revised brand route.
+A5,hms,620537,2005,2007,Historical panel exception predating the revised brand route.
+A5,any,580031,2004,2006,Historical product availability exception predating the revised brand route.
+A5,any,623878,2004,2011,Historical product availability exception predating the revised brand route.
+A5,any,623878,2024,2024,Reviewed recent-period exception; retained for separate investigation.
+A5,hms,579277,2024,2024,Reviewed decline exception; preserve the legacy brand route.
+A5,rms,579277,2023,2024,Reviewed decline exception; preserve the legacy brand route.

@@ -21,6 +21,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import aggregate_households as ah  # noqa: E402
+import aggregate_markets as am  # noqa: E402
+import brand_route as br  # noqa: E402
 
 G = ["household_code", "t", "brand_code_uc"]
 
@@ -85,3 +87,31 @@ def test_invariant_to_row_order_and_unrelated_rows():
         got = {h: got[h] for h in EXPECT}
         first = first or got
         assert got == first
+
+
+def test_route_merge_and_calendar_tiebreak_together():
+    """A classic merge target and a revised name-route UPC share one cell."""
+    master = pd.DataFrame({"upc": [1], "upc_ver_uc": [1],
+                           "brand_code_uc": [747763],
+                           "brand_descr": ["G M CLASSIC TRIX"],
+                           "size1_amount": [10.0], "size1_units": ["OZ"]})
+    names = pd.DataFrame({"year": [2021, 2021], "upc": [1, 99],
+                          "brand_descr_hms": ["GENERAL MILLS CLASSIC TRIX"] * 2,
+                          "size1_amount": [10.0, 10.0],
+                          "size1_units": ["OZ", "OZ"],
+                          "upc_dollars": [10.0, 2.5]})
+    route = br.BrandRoute(master, names, merge={747763: 557579}, overrides={})
+    purchases = pd.DataFrame({"upc": [1, 99], "panel_year": [2020, 2021],
+                              "brand_code_uc": [747763.0, np.nan]})
+    routed = am._apply_brand_route(purchases, ".", [1344], route=route)
+    assert routed["brand_code_uc"].tolist() == [557579, 557579]
+    for order in ([0, 1], [1, 0]):
+        cell = routed.iloc[order].copy()
+        cell["household_code"] = 7
+        cell["t"] = "Q1Y2021"
+        cell["DMA_Cd"] = 501
+        cell["total_price_paid"] = 2.50
+        got = ah._dominant_panel_year(cell, G)
+        assert len(got) == 1
+        assert got.iloc[0]["brand_code_uc"] == 557579
+        assert got.iloc[0]["panel_year"] == 2021

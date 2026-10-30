@@ -5,12 +5,6 @@ config/brands_45.csv is the selection; aggregate_markets._select_top_brands
 re-ranking and fails hard when a pinned brand is missing.  The market
 panel's j set equals the list (today's file now; PANEL_CLEAN may point at a
 new vintage).
-
-Backport of branch `crosswalk`'s tests/test_pinned_brands.py (1365e03) for
-the household brand-set fix (fix/household-brands-hhsize-2026-10-22): the
-loader is aggregate_markets.load_brands_45 here (brand_route.py on
-`crosswalk`), and there is no shared brand route to compare.  On a merge,
-take crosswalk's file.
 """
 import os
 import sys
@@ -23,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import aggregate_markets as am  # noqa: E402
+import brand_route as br  # noqa: E402
 
 # charter-crosswalk Appendix A: the current 45 (j)
 APPENDIX_A = [557396, 557426, 557434, 557439, 557442, 557461, 557491, 557501,
@@ -42,7 +37,7 @@ def _purchases(codes):
 
 
 def test_list_is_appendix_a():
-    b = am.load_brands_45()
+    b = br.load_brands_45()
     assert sorted(b["j"]) == sorted(APPENDIX_A)
     assert 536746 not in set(b["j"])          # CTL BR (ledger G1)
     assert 591705 in set(b["j"])              # M-O-M GOLDEN PUFFS
@@ -71,6 +66,7 @@ def test_select_fails_on_n_products_mismatch():
 def test_households_use_the_same_selection():
     import aggregate_households as ah
     assert ah._select_top_brands is am._select_top_brands
+    assert ah._apply_brand_route is am._apply_brand_route
 
 
 @pytest.mark.skipif(not (PANEL_CLEAN / "market_panel.parquet").exists(),
@@ -80,5 +76,5 @@ def test_market_panel_j_set_and_descr_equal_the_list():
                          columns=["brand_descr"]).reset_index()
     assert set(mp["j"].unique()) == set(APPENDIX_A)
     d = mp.groupby("j")["brand_descr"].first()
-    pin = am.load_brands_45().set_index("j")["brand_descr"]
+    pin = am._pinned_brand_descr().set_index("brand_code_uc")["brand_descr"]
     assert (d.reindex(pin.index) == pin).all()
