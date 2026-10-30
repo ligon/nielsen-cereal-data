@@ -141,3 +141,18 @@ shift-share instruments.
 
 - =data/clean/brand_crosswalk.parquet= --- maps =brand_code_uc= (2004--2020) \(\leftrightarrow\) =brand_descr_hms= (2021+)
 - =data/clean/nutrition.parquet= --- per-brand nutrition from 2021+ productattributes (577 brands); used as fallback behind FDC
+
+
+* Conditional outside-cereal inputs
+
+The RMS audit separates inside-brand revenue from the residual cereal basket and reports physical-size coverage before constructing an outside price.
+Package-mass candidates preserve recorded source fields and identify unknown or conflicting sizes; a candidate is not an accepted historical correction.
+The routing input stage reads an existing panel, audit categories, focused UPC-market details, a chosen mass column and explicit year/UPC/category decisions.
+It can transfer purchases only to an existing adopted inside brand with supported mass, while unresolved inside masses and catalog partitions prevent market eligibility.
+An assortment policy must be explicit, and numerical price completeness does not certify the brand partition or a model fit.
+These stages write conditional outputs and provenance to a fresh external directory and preserve accepted panels.
+Keep licensed source metadata and all derived UPC-level quantities, revenue and prices outside public version control.
+
+Run =python src/rms_outside_audit.py --help=, =python src/rms_size_candidates.py --help= and =python src/rms_outside_routing.py --help= for the required input and output paths.
+=make crosswalk-report XW_EVAL=/path/to/evaluation= writes =crosswalk-before-after.org= inside that evaluation directory; the Python report CLI uses the same directory unless =--out= is supplied.
+Local =data/= and log directories are ignored; external outputs still require an appropriate private storage location.

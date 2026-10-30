@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import demographics as dg  # noqa: E402
 
-# the pinned 45, read directly (not through a loader, whose home differs
-# between this branch and `crosswalk`)
+# Read the committed pin directly so the output-data gate does not share the
+# production loader under test.
 PIN = set(pd.read_csv(Path(__file__).resolve().parent.parent
                       / "config" / "brands_45.csv")["j"].astype("int64"))
 

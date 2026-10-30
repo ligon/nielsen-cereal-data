@@ -28,6 +28,7 @@ Inputs (read-only):
 
 Usage:  python src/rms_validate.py [--out docs/rms-validation.org]
                                    [--d6 <homog_compare.json>]
+                                   [--gate-crosswalk]
         (make rms-validate)
 """
 import argparse
@@ -473,6 +474,23 @@ def sec_crosswalk(p, r, routes):
              .drop_duplicates("j").set_index("j")["brand_descr"])
     j45 = set(p["j"].astype(int))
     rv = routes[routes["year"] >= REVISED_FIRST].copy()
+    # A build on the shared brand route (src/brand_route.py; its upc_routes
+    # carry j_route) has brand_code_uc already merged (Q2: 620485 -> 620554,
+    # 747763 -> 557579).  Count j's merge set as j on the master side too
+    # (charter-crosswalk A7), so a merge is not reported as LOST / CREATED.
+    # An accepted (name-route) build has no j_route and is reported as before.
+    merged = "j_route" in rv.columns
+    FLAGS["shared_route"] = merged
+    if merged:
+        import sys
+        sys.path.insert(0, str(HERE))
+        from brand_route import merge_codes
+        rv["master_code"] = merge_codes(rv["master_code"]).to_numpy()
+    legacy = rv[rv["master_code"].notna()]
+    wrong = legacy[legacy["brand_code_uc"].isna()
+                   | (legacy["brand_code_uc"] != legacy["master_code"])]
+    FLAGS["legacy_route_mismatches"] = [
+        (int(x.year), int(x.upc)) for x in wrong.itertuples()]
     used = rv["brand_code_uc"]
     mast = rv["master_code"]
     rv["used45"] = used.isin(j45)
@@ -490,6 +508,15 @@ def sec_crosswalk(p, r, routes):
          "UPC in the year (every store; before the DMA, CTL, 45-brand, 65-DMA",
          "and OZ filters), from =rms/diagnostics/upc_routes.parquet=.",
          ""]
+    if merged:
+        L += ["This build uses the shared brand route instead (src/brand_route.py;",
+              "rule: docs/crosswalk-rule.org): a UPC's legacy master code first,",
+              "the 2021-24 name map only for UPCs with no master code, then the",
+              "merge sets.  Both sides below count j's merge set as j (620485 in",
+              "620554, 747763 in 557579), so a LOST / CREATED / shrunk / grown",
+              "row is a route difference, not a merge (charter-crosswalk A7).",
+              "The column /name route/ then counts UPCs that carry a Homescan",
+              "name, whichever rule placed them.", ""]
     # brand-year totals under each rule
     tot = rv.groupby("year")["dollars"].sum()
     rows = []
@@ -585,7 +612,16 @@ def sec_crosswalk(p, r, routes):
                 "name route $M", "new UPCs $M", "lost to", "gained from",
                 "panel cells", "RMS cells / $"],
                rows) if rows else ["None."]
+    FLAGS["crosswalk_changes"] = [(int(row[0]), row[1], row[3]) for row in rows]
     return L
+
+
+def unallowed_crosswalk_changes(changes, allow):
+    """D4 section 7 rows lacking an explicit, reasoned D4_7 exception."""
+    from crosswalk_checks import allowed
+
+    return [(year, j, tag) for year, j, tag in changes
+            if allowed(allow, "D4_7", "rms", j, year) is None]
 
 
 def sec_funnel(fun):
@@ -715,7 +751,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default=str(HERE.parent / "docs" / "rms-validation.org"))
     ap.add_argument("--d6", default=str(RMS / "laws" / "homog_compare.json"))
+    ap.add_argument("--gate-crosswalk", action="store_true",
+                    help="fail on missing shared route, mismatched legacy UPCs, or unallow-listed section 7 rows")
     a = ap.parse_args()
+    FLAGS.clear()
     t0 = time.time()
     p, r, caveat, fun, routes = load()
     c = common_cells(p, r)
@@ -763,6 +802,19 @@ def main():
     L[head:head] = sec_summary(p, r, c, sp, sr, fun, a.d6) + [""]
     Path(a.out).write_text("\n".join(L) + "\n")
     print(f"wrote {a.out} ({len(L)} lines, {time.time() - t0:.0f} s)")
+    if a.gate_crosswalk:
+        from crosswalk_checks import load_allowlist
+
+        bad = unallowed_crosswalk_changes(FLAGS["crosswalk_changes"], load_allowlist())
+        wrong = FLAGS["legacy_route_mismatches"]
+        if not FLAGS["shared_route"] or bad or wrong:
+            raise SystemExit(
+                "D4 crosswalk gate failed: "
+                f"shared_route={FLAGS['shared_route']}, "
+                f"unallow-listed section 7 rows={bad[:10]} ({len(bad)} total), "
+                f"legacy UPC mismatches={wrong[:10]} ({len(wrong)} total)")
+        print("D4 crosswalk gate passed: no unallow-listed section 7 rows "
+              "or legacy UPC mismatches")
 
 
 if __name__ == "__main__":

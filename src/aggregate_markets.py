@@ -29,7 +29,17 @@ import pandas as pd
 import yaml
 
 # Parquet reads are I/O + decompression (releases the GIL), so threads help.
-_N_WORKERS = min(24, os.cpu_count() or 1)
+# HTC jobs share a node: honor the task's allocation instead of os.cpu_count(),
+# which may report every physical core outside our cgroup.
+def _worker_count():
+    allocated = os.environ.get("SLURM_CPUS_PER_TASK")
+    if allocated:
+        return min(24, int(allocated))
+    affinity = getattr(os, "sched_getaffinity", None)
+    return min(24, len(affinity(0)) if affinity else (os.cpu_count() or 1))
+
+
+_N_WORKERS = _worker_count()
 
 
 # ---------------------------------------------------------------------------
@@ -222,45 +232,43 @@ def _build_fips_to_dma(raw_dir, pool=None):
 # Brand unification
 # ---------------------------------------------------------------------------
 
-def _apply_brand_crosswalk(purchases, raw_dir, modules):
-    """Fill in brand_code_uc for 2021+ purchases using the brand crosswalk.
+def _apply_brand_route(purchases, raw_dir, modules, master_path=None,
+                       route=None):
+    """Assign brand j to every purchase row with the shared brand route
+    (src/brand_route.py; rule: docs/crosswalk-rule.org).
 
-    The crosswalk maps brand_descr_hms -> brand_code_uc via UPC overlap
-    between eras.  If the crosswalk file doesn't exist, build it on the fly.
+    - 2004-2020 rows keep their own brand_code_uc, mapped through the merge
+      sets (Q2 (a), Q2b).
+    - 2021+ rows (brand_code_uc NaN, AM:71): the route per (year, upc):
+      legacy master code (highest version) first, then the name map learned
+      from all of 2021-2024, then the curated overrides; merged.  Rows the
+      route cannot place stay NaN and are dropped by the caller.
+
+    The same BrandRoute serves rms_market_panel.py (A2: one implementation).
+    Replaces the old name-only crosswalk lookup (_apply_brand_crosswalk).
     """
-    clean_dir = raw_dir.parent / "clean"
-    xwalk_path = clean_dir / "brand_crosswalk.parquet"
+    from brand_route import cached_route, REVISED_FIRST
+    raw_dir = Path(raw_dir)
+    if route is None:
+        master_path = Path(master_path or raw_dir / "master_products.parquet")
+        route = cached_route(str(raw_dir), str(master_path),
+                             tuple(int(m) for m in modules))
 
-    if xwalk_path.exists():
-        xwalk = pd.read_parquet(xwalk_path)
-    else:
-        print("  Brand crosswalk not found; building from UPC overlap...")
-        from brand_crosswalk import build_crosswalk
-        xwalk = build_crosswalk(str(raw_dir), modules)
-
-    if xwalk.empty:
-        warnings.warn("Brand crosswalk is empty; 2021+ brands will be unmatched")
-        return purchases
-
-    # Map: brand_descr (2021+ names) -> brand_code_uc
-    descr_to_code = (
-        xwalk[["brand_code_uc", "brand_descr_2021"]]
-        .drop_duplicates("brand_descr_2021")
-        .rename(columns={"brand_descr_2021": "brand_descr"})
-    )
-
-    # Fill missing brand_code_uc from the crosswalk
-    mask = purchases["brand_code_uc"].isna()
-    if mask.any():
-        lookup = purchases.loc[mask, ["brand_descr"]].merge(
-            descr_to_code, on="brand_descr", how="left"
-        )
-        purchases.loc[mask, "brand_code_uc"] = lookup["brand_code_uc"].values
-        n_filled = mask.sum() - purchases.loc[mask, "brand_code_uc"].isna().sum()
-        n_still_missing = purchases["brand_code_uc"].isna().sum()
-        print(f"  Brand crosswalk: filled {n_filled:,} of {mask.sum():,} "
-              f"2021+ rows; {n_still_missing:,} still missing")
-
+    classic = (purchases["panel_year"] < REVISED_FIRST).to_numpy()
+    if classic.any():
+        purchases.loc[classic, "brand_code_uc"] = route.merge_codes(
+            purchases.loc[classic, "brand_code_uc"]).to_numpy()
+    n_new = int((~classic).sum())
+    if n_new:
+        for y in sorted(purchases.loc[~classic, "panel_year"].unique()):
+            sel = (purchases["panel_year"] == y).to_numpy()
+            r = route.route(int(y), purchases.loc[sel, "upc"].unique())
+            jmap = r.set_index("upc")["j"]
+            purchases.loc[sel, "brand_code_uc"] = (
+                purchases.loc[sel, "upc"].map(jmap).to_numpy())
+        n_miss = int(purchases.loc[~classic, "brand_code_uc"].isna().sum())
+        print(f"  Brand route: placed {n_new - n_miss:,} of {n_new:,} "
+              f"2021+ rows; {n_miss:,} unassigned")
     return purchases
 
 
@@ -375,23 +383,6 @@ def _add_quarter(df):
 # Product selection
 # ---------------------------------------------------------------------------
 
-# The pinned 45 (charter-crosswalk Q3/A3, EL 2026-10-19), backported from
-# branch `crosswalk` (1365e03) for the household brand-set fix: one committed
-# list, config/brands_45.csv, consumed by AM (here) and AH (which imports
-# _select_top_brands), so the market and household panels cannot select
-# different brands.  On `crosswalk` the loader lives in src/brand_route.py;
-# when merging, take crosswalk's _select_top_brands and drop these two names.
-BRANDS_45 = Path(__file__).resolve().parent.parent / "config" / "brands_45.csv"
-
-
-def load_brands_45(path=BRANDS_45) -> pd.DataFrame:
-    """The pinned 45 (Q3): columns j, brand_descr, in committed order."""
-    b = pd.read_csv(path)
-    b["j"] = b["j"].astype("int64")
-    assert b["j"].is_unique and len(b) == 45, path
-    return b
-
-
 def _select_top_brands(purchases, n_products, clean_dir=None, pinned=None):
     """The 45 brands: the committed list config/brands_45.csv (charter-
     crosswalk Q3 "pin today's 45"; A3).  No re-ranking and no
@@ -400,6 +391,7 @@ def _select_top_brands(purchases, n_products, clean_dir=None, pinned=None):
     rows here (a route change must not silently change the set).
     `clean_dir` is accepted for the old call signature and ignored.
     """
+    from brand_route import load_brands_45, BRANDS_45
     b = load_brands_45(pinned or BRANDS_45)
     codes = b["j"].to_numpy()
     if len(codes) != n_products:
@@ -415,6 +407,15 @@ def _select_top_brands(purchases, n_products, clean_dir=None, pinned=None):
     print(f"  Pinned {len(codes)} brands (config/brands_45.csv; "
           f"cover {cov:.1%} of cereal spending)")
     return codes
+
+
+def _pinned_brand_descr(pinned=None):
+    """j -> the panel's brand_descr for the pinned 45 (so a merged code can
+    never relabel j, and nutrition overrides keyed by brand_descr match)."""
+    from brand_route import load_brands_45, BRANDS_45
+    b = load_brands_45(pinned or BRANDS_45)
+    return b.rename(columns={"j": "brand_code_uc"})[["brand_code_uc",
+                                                     "brand_descr"]]
 
 
 # ---------------------------------------------------------------------------
@@ -524,11 +525,8 @@ def aggregate_markets(cfg, years=None, raw_dir="data/raw", clean_dir="data/clean
     # ------------------------------------------------------------------
     # Step 3: Apply brand crosswalk for 2021+ data
     # ------------------------------------------------------------------
-    if purchases["brand_code_uc"].isna().any():
-        print("\n[3/7] Applying brand crosswalk for 2021+ purchases...")
-        purchases = _apply_brand_crosswalk(purchases, raw_dir, modules)
-    else:
-        print("\n[3/7] Brand crosswalk: not needed (all purchases have brand_code_uc)")
+    print("\n[3/7] Applying the brand route (merge sets; 2021+ UPC -> j)...")
+    purchases = _apply_brand_route(purchases, raw_dir, modules)
 
     # Drop purchases with no brand_code_uc (unmatchable 2021+ brands)
     n_before = len(purchases)
@@ -720,10 +718,7 @@ def aggregate_markets(cfg, years=None, raw_dir="data/raw", clean_dir="data/clean
         )
 
     # Add brand description for readability
-    brand_names = (
-        merged[["brand_code_uc", "brand_descr"]]
-        .drop_duplicates("brand_code_uc")
-    )
+    brand_names = _pinned_brand_descr()      # A3: the pinned list's descr
     agg = agg.merge(brand_names, on="brand_code_uc", how="left")
 
     # Rename for output

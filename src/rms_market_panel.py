@@ -15,16 +15,19 @@ purchase records.
   m                     store DMA: classic stores_<yr>.dma_code; 2021+ via
                         the panel's own FIPS->DMA map _build_fips_to_dma
                         (AM:188-218), imported, not re-implemented
-  j                     brand_code_uc:
+  j                     brand_code_uc, through the shared brand route
+                        src/brand_route.py (docs/crosswalk-rule.org; the
+                        Homescan builders call the same code):
       classic  rms_versions_<yr> (upc, upc_ver_uc) joined to the product
-               master on (upc, upc_ver_uc)  (mirrors extract.py:121)
-      2021+    the panel's name route: upc -> brand_descr_hms (Homescan
-               purchases of the SAME year first, then the nearest other
-               2021+ year) -> brand crosswalk with drop_duplicates(
-               'brand_descr_2021') in file order (AM:245-250); fallback for
-               upcs no Homescan household bought: the classic master at the
-               highest upc_ver_uc.  Size follows the same route
-               (size1_amount_hms / 1000, AM:73-76; master size1_amount).
+               master on (upc, upc_ver_uc)  (mirrors extract.py:121), then
+               the merge sets (config/brand_merge_sets.csv)
+      2021+    BrandRoute.route(y, upcs): the master code at the highest
+               upc_ver_uc if the upc has one, else its Homescan name
+               (same year first, then the nearest other 2021+ year) through
+               the name map learned from all of 2021-2024, else the curated
+               overrides; then the merge sets.  Name and size: Homescan
+               (size1_amount_hms / 1000, AM:73-76); a upc no household
+               bought takes the master's descr and size.
   filters               brand mapped (AM:526-528), DMA mapped (AM:578-582),
                         CTL* private label dropped (AM:591-595), j in the
                         panel's 45 product_ids, m in the panel's 65 DMAs
@@ -156,78 +159,47 @@ def classic_upc_map(y):
     j = (j.sort_values(["upc", "upc_ver_uc"])
           .drop_duplicates("upc", keep="last"))
     j["master_code"] = j["brand_code_uc"]
+    # merge sets (Q2 (a), Q2b) in classic years too: brand_route.merge_codes
+    sys.path.insert(0, str(HERE))
+    from brand_route import merge_codes
+    j["brand_code_uc"] = merge_codes(j["brand_code_uc"]).to_numpy()
     j["name_route_code"] = np.nan
+    j["j_route"] = "classic_version"
     return j[["upc", "route", "brand_code_uc", "brand_descr",
-              "size1_amount", "size1_units", "master_code", "name_route_code"]]
+              "size1_amount", "size1_units", "master_code", "name_route_code",
+              "j_route"]]
 
 
-def _hms_names():
-    """Homescan 2021+ purchases: (year, upc) -> brand_descr_hms, size."""
-    parts = []
-    for yy in range(REVISED_FIRST, T_HI + 1):
-        p = PANEL_RAW / f"purchases_{yy}.parquet"
-        if not p.exists():
-            continue
-        d = pd.read_parquet(p, columns=["upc", "brand_descr_hms",
-                                        "size1_amount_hms", "size1_unit_hms"])
-        # within a year a upc has one brand_descr_hms (verified: 0 conflicts);
-        # take the most frequent (name, size, unit) to be safe.
-        d = (d.groupby(["upc", "brand_descr_hms", "size1_amount_hms",
-                        "size1_unit_hms"], dropna=False).size()
-              .rename("n").reset_index()
-              .sort_values(["upc", "n"], ascending=[True, False])
-              .drop_duplicates("upc"))
-        d["hms_year"] = yy
-        parts.append(d)
-    h = pd.concat(parts, ignore_index=True)
-    # AM:73-76: size1_amount_hms / 1000 in the unit size1_unit_hms (stripped)
-    h["size1_amount"] = pd.to_numeric(h["size1_amount_hms"], errors="coerce") / 1000.0
-    h["size1_units"] = h["size1_unit_hms"].astype(str).str.strip()
-    h = h.rename(columns={"brand_descr_hms": "brand_descr"})
-    return h[["upc", "hms_year", "brand_descr", "size1_amount", "size1_units"]]
-
-
-def _descr_to_code():
-    """AM:239-250, verbatim: crosswalk name -> brand_code_uc, first by file order."""
-    xwalk = pd.read_parquet(PANEL_CLEAN / "brand_crosswalk.parquet")
-    return (xwalk[["brand_code_uc", "brand_descr_2021"]]
-            .drop_duplicates("brand_descr_2021")
-            .rename(columns={"brand_descr_2021": "brand_descr"}))
+def _route():
+    """The shared brand route (src/brand_route.py), one per process: the
+    Homescan names from PANEL_RAW, the module-1344 master from OUT.  The
+    Homescan builders call the same class (aggregate_markets.py
+    _apply_brand_route), so a (year, upc) gets the same j in both sources
+    (charter-crosswalk A2; tests/test_brand_route.py)."""
+    sys.path.insert(0, str(HERE))
+    from brand_route import cached_route
+    return cached_route(str(PANEL_RAW), str(OUT / "master_products_1344.parquet"))
 
 
 def revised_upc_map(y, upcs):
-    """(upc) -> brand + size for a 2021+ year y (panel name route)."""
-    u = pd.DataFrame({"upc": np.unique(upcs)})
-    h = _hms_names()
-    h["dist"] = (h["hms_year"] - y).abs() * 2 + (h["hms_year"] > y)  # tie -> earlier
-    h = h[h["upc"].isin(u["upc"])].sort_values(["upc", "dist"])
-    h = h.drop_duplicates("upc")
-    h["route"] = np.where(h["hms_year"] == y, "hms_same_year", "hms_other_year")
-    d2c = _descr_to_code()
-    h = h.merge(d2c, on="brand_descr", how="left")
-    h["name_route_code"] = h["brand_code_uc"]
-
-    master = _master_latest()
-    ml = (master.sort_values(["upc", "upc_ver_uc"])
-                .drop_duplicates("upc", keep="last"))   # rule: highest version
-    ml = ml.rename(columns={"brand_code_uc": "master_code",
-                            "brand_descr": "master_descr",
-                            "size1_amount": "m_size", "size1_units": "m_units"})
-    out = u.merge(h[["upc", "route", "brand_code_uc", "brand_descr",
-                     "size1_amount", "size1_units", "name_route_code"]],
-                  on="upc", how="left")
-    out = out.merge(ml[["upc", "master_code", "master_descr", "m_size",
-                        "m_units"]], on="upc", how="left")
-    fb = out["route"].isna() & out["master_code"].notna()
-    out.loc[fb, "route"] = "classic_master_fallback"
-    out.loc[fb, "brand_code_uc"] = out.loc[fb, "master_code"]
-    out.loc[fb, "brand_descr"] = out.loc[fb, "master_descr"]
-    out.loc[fb, "size1_amount"] = out.loc[fb, "m_size"]
-    out.loc[fb, "size1_units"] = out.loc[fb, "m_units"]
-    out["route"] = out["route"].fillna("unmapped")
-    return out[["upc", "route", "brand_code_uc", "brand_descr",
-                "size1_amount", "size1_units", "master_code",
-                "name_route_code"]]
+    """(upc) -> brand + size for a 2021+ year y (the shared brand route:
+    legacy master code at the highest version, else the 2021-24 name map,
+    else the curated overrides; merged).  Name and size: Homescan same year,
+    else the nearest other 2021+ year; a upc no household bought takes the
+    master's descr and size (route 'classic_master_fallback')."""
+    r = _route().route(y, upcs)
+    has_name = r["name_year"].notna()
+    r["route"] = np.where(~has_name,
+                          np.where(r["legacy_code"].notna(),
+                                   "classic_master_fallback", "unmapped"),
+                          np.where(r["name_year"] == y, "hms_same_year",
+                                   "hms_other_year"))
+    r["brand_code_uc"] = r["j"]
+    r["master_code"] = r["legacy_code"]
+    r["name_route_code"] = r["name_code"]
+    return r[["upc", "route", "brand_code_uc", "brand_descr",
+              "size1_amount", "size1_units", "master_code",
+              "name_route_code", "j_route"]]
 
 
 # ---------------------------------------------------------------------------
